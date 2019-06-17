@@ -40,6 +40,21 @@ class MainThread(threading.Thread):
         ServerPool._loop(*self.params)
 
 
+def del_server(port):
+    port = int(port)
+    logging.info("del server at %d" % port)
+    try:
+        udpsock = socket(AF_INET, SOCK_DGRAM)
+        udpsock.sendto(
+            "%s:%s:0:0" % (get_config().MANAGE_PASS, port),
+            (get_config().MANAGE_BIND_IP, get_config().MANAGE_PORT),
+        )
+        udpsock.close()
+    except Exception as e:
+        logging.warning(e)
+    return True
+
+
 class ServerPool(object):
     instance = None
 
@@ -118,7 +133,6 @@ class ServerPool(object):
         return True
 
     def new_server(self, port, user_config):
-        ret = True
         port = int(port)
         ipv6_ok = False
 
@@ -169,7 +183,7 @@ class ServerPool(object):
                     if common.to_str(a_config["server_ipv6"]) == "::":
                         ipv6_ok = True
                 except Exception as e:
-                    logging.warn("IPV6 %s " % (e,))
+                    logging.warning("IPV6 %s " % (e,))
 
         if "server" in self.config:
             if port in self.tcp_servers_pool:
@@ -208,20 +222,6 @@ class ServerPool(object):
 
         return True
 
-    def del_server(self, port):
-        port = int(port)
-        logging.info("del server at %d" % port)
-        try:
-            udpsock = socket(AF_INET, SOCK_DGRAM)
-            udpsock.sendto(
-                "%s:%s:0:0" % (get_config().MANAGE_PASS, port),
-                (get_config().MANAGE_BIND_IP, get_config().MANAGE_PORT),
-            )
-            udpsock.close()
-        except Exception as e:
-            logging.warn(e)
-        return True
-
     def cb_del_server(self, port):
         port = int(port)
 
@@ -247,12 +247,12 @@ class ServerPool(object):
                 self.tcp_servers_pool[port].close(is_not_single)
                 del self.tcp_servers_pool[port]
             except Exception as e:
-                logging.warn(e)
+                logging.warning(e)
             try:
                 self.udp_servers_pool[port].close(is_not_single)
                 del self.udp_servers_pool[port]
             except Exception as e:
-                logging.warn(e)
+                logging.warning(e)
 
         if "server_ipv6" in self.config:
             if port not in self.tcp_ipv6_servers_pool:
@@ -269,12 +269,12 @@ class ServerPool(object):
                     self.tcp_ipv6_servers_pool[port].close(is_not_single)
                     del self.tcp_ipv6_servers_pool[port]
                 except Exception as e:
-                    logging.warn(e)
+                    logging.warning(e)
                 try:
                     self.udp_ipv6_servers_pool[port].close(is_not_single)
                     del self.udp_ipv6_servers_pool[port]
                 except Exception as e:
-                    logging.warn(e)
+                    logging.warning(e)
 
         return True
 
@@ -452,7 +452,7 @@ class ServerPool(object):
         for port in servers.keys():
             if servers[port]._config["is_multi_user"] == 0:
                 templist = self.get_server_iplist(port)
-                if templist != []:
+                if templist:
                     if port not in ret:
                         ret[port] = templist[:]
                     else:
@@ -478,7 +478,7 @@ class ServerPool(object):
         for port in servers.keys():
             if servers[port]._config["is_multi_user"] == 0:
                 templist = self.get_server_detect_log(port)
-                if templist != []:
+                if templist:
                     if port not in ret:
                         ret[port] = templist[:]
                     else:
@@ -608,7 +608,7 @@ class ServerPool(object):
         ret = {}
         for port in servers.keys():
             templist = self.get_server_wrong(port)
-            if templist != []:
+            if templist:
                 ret[port] = templist[:]
         return ret
 

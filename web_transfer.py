@@ -5,17 +5,74 @@ import logging
 import os
 import platform
 import socket
-import traceback
 
 import fcntl
 
-import importloader
-from configloader import load_config, get_config
+from configloader import get_config
+from db_transfer import new_server
 from server_pool import ServerPool
 from shadowsocks import common, shell
 
 switchrule = None
 db_instance = None
+
+
+def uptime():
+    with open("/proc/uptime", "r") as f:
+        return float(f.readline().split()[0])
+
+
+def is_all_thread_alive():
+    if not ServerPool.get_instance().thread.is_alive():
+        return False
+    return True
+
+
+def new_server(port, passwd, cfg):
+    protocol = cfg.get(
+        "protocol",
+        ServerPool.get_instance().config.get("protocol", "origin"),
+    )
+    method = cfg.get(
+        "method", ServerPool.get_instance().config.get("method", "None")
+    )
+    obfs = cfg.get(
+        "obfs", ServerPool.get_instance().config.get("obfs", "plain")
+    )
+    logging.info(
+        "db start server at port [%s] pass [%s] protocol [%s] method [%s] obfs [%s]"
+        % (port, passwd, protocol, method, obfs)
+    )
+    ServerPool.new_server(port, cfg)
+
+
+def cmp(val1, val2):
+    if isinstance(val1, bytes):
+        val1 = common.to_str(val1)
+    if isinstance(val2, bytes):
+        val2 = common.to_str(val2)
+    return val1 == val2
+
+
+def traffic_show(traffic):
+    if traffic < 1024:
+        return str(round(traffic, 2)) + "B"
+
+    if traffic < 1024 * 1024:
+        return str(round((traffic / 1024), 2)) + "KB"
+
+    if traffic < 1024 * 1024 * 1024:
+        return str(round((traffic / 1024 / 1024), 2)) + "MB"
+
+    return str(round((traffic / 1024 / 1024 / 1024), 2)) + "GB"
+
+
+def load():
+    import os
+
+    return os.popen(
+        'cat /proc/loadavg | awk \'{ print $1" "$2" "$3 }\''
+    ).readlines()[0]
 
 
 class WebTransfer(object):
@@ -47,29 +104,26 @@ class WebTransfer(object):
 
         update_transfer = {}
 
-        alive_user_count = 0
-        bandwidth_thistime = 0
-
         data = []
-        for id in dt_transfer.keys():
-            if dt_transfer[id][0] == 0 and dt_transfer[id][1] == 0:
+        for tid in dt_transfer.keys():
+            if dt_transfer[tid][0] == 0 and dt_transfer[tid][1] == 0:
                 continue
             data.append(
                 {
-                    "u": dt_transfer[id][0],
-                    "d": dt_transfer[id][1],
-                    "user_id": self.port_uid_table[id],
+                    "u": dt_transfer[tid][0],
+                    "d": dt_transfer[tid][1],
+                    "user_id": self.port_uid_table[tid],
                 }
             )
-            update_transfer[id] = dt_transfer[id]
-        webapi.postApi(
+            update_transfer[tid] = dt_transfer[tid]
+        webapi.post_api(
             "users/traffic", {"node_id": get_config().NODE_ID}, {"data": data}
         )
 
-        webapi.postApi(
-            "nodes/%d/info" % (get_config().NODE_ID),
+        webapi.post_api(
+            "nodes/%d/info" % get_config().NODE_ID,
             {"node_id": get_config().NODE_ID},
-            {"uptime": str(self.uptime()), "load": str(self.load())},
+            {"uptime": str(uptime()), "load": str(load())},
         )
 
         online_iplist = ServerPool.get_instance().get_servers_iplist()
@@ -77,7 +131,7 @@ class WebTransfer(object):
         for port in online_iplist.keys():
             for ip in online_iplist[port]:
                 data.append({"ip": ip, "user_id": self.port_uid_table[port]})
-        webapi.postApi(
+        webapi.post_api(
             "users/aliveip", {"node_id": get_config().NODE_ID}, {"data": data}
         )
 
@@ -88,7 +142,7 @@ class WebTransfer(object):
                 data.append(
                     {"list_id": rule_id, "user_id": self.port_uid_table[port]}
                 )
-        webapi.postApi(
+        webapi.post_api(
             "users/detectlog",
             {"node_id": get_config().NODE_ID},
             {"data": data},
@@ -99,9 +153,8 @@ class WebTransfer(object):
         if platform.system() == "Linux" and get_config().ANTISSATTACK == 1:
             wrong_iplist = ServerPool.get_instance().get_servers_wrong()
             server_ip = socket.gethostbyname(get_config().MYSQL_HOST)
-            for id in wrong_iplist.keys():
-                for ip in wrong_iplist[id]:
-                    realip = ""
+            for tid in wrong_iplist.keys():
+                for ip in wrong_iplist[tid]:
                     is_ipv6 = False
                     if common.is_ip(ip):
                         if common.is_ip(ip) == socket.AF_INET:
@@ -150,35 +203,12 @@ class WebTransfer(object):
                     fcntl.flock(deny_file.fileno(), fcntl.LOCK_EX)
                     deny_file.write(deny_str)
                     deny_file.close()
-            webapi.postApi(
+            webapi.post_api(
                 "func/block_ip",
                 {"node_id": get_config().NODE_ID},
                 {"data": data},
             )
         return update_transfer
-
-    def uptime(self):
-        with open("/proc/uptime", "r") as f:
-            return float(f.readline().split()[0])
-
-    def load(self):
-        import os
-
-        return os.popen(
-            'cat /proc/loadavg | awk \'{ print $1" "$2" "$3 }\''
-        ).readlines()[0]
-
-    def trafficShow(self, Traffic):
-        if Traffic < 1024:
-            return str(round((Traffic), 2)) + "B"
-
-        if Traffic < 1024 * 1024:
-            return str(round((Traffic / 1024), 2)) + "KB"
-
-        if Traffic < 1024 * 1024 * 1024:
-            return str(round((Traffic / 1024 / 1024), 2)) + "MB"
-
-        return str(round((Traffic / 1024 / 1024 / 1024), 2)) + "GB"
 
     def push_db_all_user(self):
         # 更新用户流量到数据库
@@ -186,38 +216,38 @@ class WebTransfer(object):
         curr_transfer = ServerPool.get_instance().get_servers_transfer()
         # 上次和本次的增量
         dt_transfer = {}
-        for id in curr_transfer.keys():
-            if id in last_transfer:
+        for tid in curr_transfer.keys():
+            if tid in last_transfer:
                 if (
-                        curr_transfer[id][0]
-                        + curr_transfer[id][1]
-                        - last_transfer[id][0]
-                        - last_transfer[id][1]
+                        curr_transfer[tid][0]
+                        + curr_transfer[tid][1]
+                        - last_transfer[tid][0]
+                        - last_transfer[tid][1]
                         <= 0
                 ):
                     continue
                 if (
-                        last_transfer[id][0] <= curr_transfer[id][0]
-                        and last_transfer[id][1] <= curr_transfer[id][1]
+                        last_transfer[tid][0] <= curr_transfer[tid][0]
+                        and last_transfer[tid][1] <= curr_transfer[tid][1]
                 ):
-                    dt_transfer[id] = [
-                        curr_transfer[id][0] - last_transfer[id][0],
-                        curr_transfer[id][1] - last_transfer[id][1],
+                    dt_transfer[tid] = [
+                        curr_transfer[tid][0] - last_transfer[tid][0],
+                        curr_transfer[tid][1] - last_transfer[tid][1],
                     ]
                 else:
-                    dt_transfer[id] = [
-                        curr_transfer[id][0],
-                        curr_transfer[id][1],
+                    dt_transfer[tid] = [
+                        curr_transfer[tid][0],
+                        curr_transfer[tid][1],
                     ]
             else:
-                if curr_transfer[id][0] + curr_transfer[id][1] <= 0:
+                if curr_transfer[tid][0] + curr_transfer[tid][1] <= 0:
                     continue
-                dt_transfer[id] = [curr_transfer[id][0], curr_transfer[id][1]]
-        for id in dt_transfer.keys():
-            last = last_transfer.get(id, [0, 0])
-            last_transfer[id] = [
-                last[0] + dt_transfer[id][0],
-                last[1] + dt_transfer[id][1],
+                dt_transfer[tid] = [curr_transfer[tid][0], curr_transfer[tid][1]]
+        for tid in dt_transfer.keys():
+            last = last_transfer.get(tid, [0, 0])
+            last_transfer[tid] = [
+                last[0] + dt_transfer[tid][0],
+                last[1] + dt_transfer[tid][1],
             ]
         self.last_update_transfer = last_transfer.copy()
         self.update_all_user(dt_transfer)
@@ -225,7 +255,7 @@ class WebTransfer(object):
     def pull_db_all_user(self):
         global webapi
 
-        nodeinfo = webapi.getApi("nodes/%d/info" % (get_config().NODE_ID))
+        nodeinfo = webapi.get_api("nodes/%d/info" % get_config().NODE_ID)
 
         if not nodeinfo:
             rows = []
@@ -241,7 +271,7 @@ class WebTransfer(object):
         else:
             self.is_relay = False
 
-        data = webapi.getApi("users", {"node_id": get_config().NODE_ID})
+        data = webapi.get_api("users", {"node_id": get_config().NODE_ID})
 
         if not data:
             rows = []
@@ -252,7 +282,7 @@ class WebTransfer(object):
         # 读取节点IP
         # SELECT * FROM `ss_node`  where `node_ip` != ''
         self.node_ip_list = []
-        data = webapi.getApi("nodes")
+        data = webapi.get_api("nodes")
         for node in data:
             temp_list = str(node["node_ip"]).split(",")
             self.node_ip_list.append(temp_list[0])
@@ -261,11 +291,9 @@ class WebTransfer(object):
 
         self.detect_text_list = {}
         self.detect_hex_list = {}
-        data = webapi.getApi("func/detect_rules")
+        data = webapi.get_api("func/detect_rules")
         for rule in data:
-            d = {}
-            d["id"] = int(rule["id"])
-            d["regex"] = str(rule["regex"])
+            d = {"id": int(rule["id"]), "regex": str(rule["regex"])}
             if int(rule["type"]) == 1:
                 self.detect_text_list[d["id"]] = d.copy()
             else:
@@ -276,36 +304,21 @@ class WebTransfer(object):
         if self.is_relay:
             self.relay_rule_list = {}
 
-            data = webapi.getApi(
+            data = webapi.get_api(
                 "func/relay_rules", {"node_id": get_config().NODE_ID}
             )
             for rule in data:
-                d = {}
-                d["id"] = int(rule["id"])
-                d["user_id"] = int(rule["user_id"])
-                d["dist_ip"] = str(rule["dist_ip"])
-                d["port"] = int(rule["port"])
-                d["priority"] = int(rule["priority"])
+                d = {"id": int(rule["id"]), "user_id": int(rule["user_id"]), "dist_ip": str(rule["dist_ip"]),
+                     "port": int(rule["port"]), "priority": int(rule["priority"])}
                 self.relay_rule_list[d["id"]] = d.copy()
 
         return rows
-
-    def cmp(self, val1, val2):
-        if isinstance(val1, bytes):
-            val1 = common.to_str(val1)
-        if isinstance(val2, bytes):
-            val2 = common.to_str(val2)
-        return val1 == val2
 
     def del_server_out_of_bound_safe(self, last_rows, rows):
         # 停止超流量的服务
         # 启动没超流量的服务
         # 需要动态载入switchrule，以便实时修改规则
 
-        try:
-            switchrule = importloader.load("switchrule")
-        except Exception as e:
-            logging.error("load switchrule.py fail")
         cur_servers = {}
         new_servers = {}
 
@@ -387,13 +400,7 @@ class WebTransfer(object):
             merge_config_keys = ["password"] + read_config_keys
             for name in cfg.keys():
                 if hasattr(cfg[name], "encode"):
-                    try:
-                        cfg[name] = cfg[name].encode("utf-8")
-                    except Exception as e:
-                        logging.warning(
-                            'encode cfg key "%s" fail, val "%s"'
-                            % (name, cfg[name])
-                        )
+                    pass
 
             if "node_speedlimit" in cfg:
                 if (
@@ -686,7 +693,7 @@ class WebTransfer(object):
                 if port in ServerPool.get_instance().tcp_servers_pool:
                     relay = ServerPool.get_instance().tcp_servers_pool[port]
                     for name in merge_config_keys:
-                        if name in cfg and not self.cmp(
+                        if name in cfg and not cmp(
                                 cfg[name], relay._config[name]
                         ):
                             cfgchange = True
@@ -699,7 +706,7 @@ class WebTransfer(object):
                         port
                     ]
                     for name in merge_config_keys:
-                        if name in cfg and not self.cmp(
+                        if name in cfg and not cmp(
                                 cfg[name], relay._config[name]
                         ):
                             cfgchange = True
@@ -710,7 +717,7 @@ class WebTransfer(object):
                     new_servers[port] = (passwd, cfg)
             elif ServerPool.get_instance().server_run_status(port) is False:
                 # new_servers[port] = passwd
-                self.new_server(port, passwd, cfg)
+                new_server(port, passwd, cfg)
 
         for row in last_rows:
             if row["port"] in cur_servers:
@@ -726,7 +733,7 @@ class WebTransfer(object):
             )
             for port in new_servers.keys():
                 passwd, cfg = new_servers[port]
-                self.new_server(port, passwd, cfg)
+                new_server(port, passwd, cfg)
 
         ServerPool.get_instance().push_uid_port_table(self.uid_port_table)
 
@@ -756,23 +763,6 @@ class WebTransfer(object):
                     mu_user_port
                 ].reset_single_multi_user_traffic(self.port_uid_table[port])
 
-    def new_server(self, port, passwd, cfg):
-        protocol = cfg.get(
-            "protocol",
-            ServerPool.get_instance().config.get("protocol", "origin"),
-        )
-        method = cfg.get(
-            "method", ServerPool.get_instance().config.get("method", "None")
-        )
-        obfs = cfg.get(
-            "obfs", ServerPool.get_instance().config.get("obfs", "plain")
-        )
-        logging.info(
-            "db start server at port [%s] pass [%s] protocol [%s] method [%s] obfs [%s]"
-            % (port, passwd, protocol, method, obfs)
-        )
-        ServerPool.get_instance().new_server(port, cfg)
-
     @staticmethod
     def del_servers():
         global db_instance
@@ -800,7 +790,6 @@ class WebTransfer(object):
         global webapi
         timeout = 60
         socket.setdefaulttimeout(timeout)
-        last_rows = []
         db_instance = obj()
         webapi = webapi_utils.WebApi()
 
@@ -814,35 +803,6 @@ class WebTransfer(object):
             )
         except:
             pass
-        try:
-            while True:
-                load_config()
-                try:
-                    ping = webapi.getApi("func/ping")
-                    if ping is None:
-                        logging.error(
-                            "something wrong with your http api, please check your config and website status and try again later."
-                        )
-                    else:
-                        db_instance.push_db_all_user()
-                        rows = db_instance.pull_db_all_user()
-                        db_instance.del_server_out_of_bound_safe(
-                            last_rows, rows
-                        )
-                        last_rows = rows
-                except Exception as e:
-                    trace = traceback.format_exc()
-                    logging.error(trace)
-                    # logging.warn('db thread except:%s' % e)
-                if (
-                        db_instance.event.wait(60)
-                        or not db_instance.is_all_thread_alive()
-                ):
-                    break
-                if db_instance.has_stopped:
-                    break
-        except KeyboardInterrupt as e:
-            pass
         db_instance.del_servers()
         ServerPool.get_instance().stop()
         db_instance = None
@@ -852,8 +812,3 @@ class WebTransfer(object):
         global db_instance
         db_instance.has_stopped = True
         db_instance.event.set()
-
-    def is_all_thread_alive(self):
-        if not ServerPool.get_instance().thread.is_alive():
-            return False
-        return True

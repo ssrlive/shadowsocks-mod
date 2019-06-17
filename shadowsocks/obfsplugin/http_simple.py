@@ -182,7 +182,7 @@ class http_simple(plain.plain):
             if match_begin(buf, b'GET /') or match_begin(buf, b'POST /'):
                 if len(buf) > 65536:
                     self.recv_buffer = None
-                    logging.warn('http_simple: over size')
+                    logging.warning('http_simple: over size')
                     return self.not_match_return(buf)
             else: #not http header, run on original protocol
                 self.recv_buffer = None
@@ -270,7 +270,7 @@ class http_post(http_simple):
             if match_begin(buf, b'GET ') or match_begin(buf, b'POST '):
                 if len(buf) > 65536:
                     self.recv_buffer = None
-                    logging.warn('http_post: over size')
+                    logging.warning('http_post: over size')
                     return self.not_match_return(buf)
             else: #not http header, run on original protocol
                 self.recv_buffer = None

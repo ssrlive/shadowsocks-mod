@@ -1,7 +1,7 @@
 from configloader import get_config
 
 
-def getKeys():
+def get_keys():
     key_list = ["id", "port", "u", "d", "transfer_enable", "passwd", "enable"]
     if get_config().API_INTERFACE == "sspanelv3":
         key_list += ["method"]
@@ -25,6 +25,6 @@ def getKeys():
     # return key_list + ['plan'] # append the column name 'plan'
 
 
-def isTurnOn(row):
+def is_turn_on(row):
     return True
     # return row['plan'] == 'B' # then judge here

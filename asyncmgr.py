@@ -31,6 +31,21 @@ import server_pool
 from shadowsocks import eventloop
 
 
+def _handle_data(sock):
+    data, addr = sock.recvfrom(128)
+    # manage pwd:port:passwd:action
+    args = data.split(":")
+    if len(args) < 4:
+        return
+    if args[0] == Config.MANAGE_PASS:
+        if args[3] == "0":
+            server_pool.ServerPool.get_instance().cb_del_server(args[1])
+        elif args[3] == "1":
+            server_pool.ServerPool.new_server(
+                args[1], args[2]
+            )
+
+
 class ServerMgr(object):
     def __init__(self):
         self._loop = None
@@ -55,20 +70,6 @@ class ServerMgr(object):
         self._sock.setblocking(False)
         loop.add(self._sock, eventloop.POLL_IN, self)
 
-    def _handle_data(self, sock):
-        data, addr = sock.recvfrom(128)
-        # manage pwd:port:passwd:action
-        args = data.split(":")
-        if len(args) < 4:
-            return
-        if args[0] == Config.MANAGE_PASS:
-            if args[3] == "0":
-                server_pool.ServerPool.get_instance().cb_del_server(args[1])
-            elif args[3] == "1":
-                server_pool.ServerPool.get_instance().new_server(
-                    args[1], args[2]
-                )
-
     def handle_event(self, sock, fd, event):
         if sock != self._sock:
             return
@@ -83,7 +84,7 @@ class ServerMgr(object):
             self._sock.setblocking(False)
             self._loop.add(self._sock, eventloop.POLL_IN, self)
         else:
-            self._handle_data(sock)
+            _handle_data(sock)
 
     def close(self):
         if self._sock:

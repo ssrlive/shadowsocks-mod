@@ -122,9 +122,50 @@ RSP_STATE_ERROR = b"\x03"
 RSP_STATE_DISCONNECT = b"\x04"
 RSP_STATE_REDIRECT = b"\x05"
 
+
 def client_key(source_addr, server_af):
     # notice this is server af, not dest af
     return '%s:%s:%d' % (source_addr[0], source_addr[1], server_af)
+
+
+def _pack_rsp_data(cmd, request_id, data):
+    _rand_data = b"123456789abcdefghijklmnopqrstuvwxyz" * 2
+    reqid_str = struct.pack(">H", request_id)
+    return b''.join([CMD_VER_STR, common.chr(cmd), reqid_str, data, _rand_data[
+                                                                    :random.randint(0, len(_rand_data))],
+                     reqid_str])
+
+
+def _pre_parse_udp_header(data):
+    if data is None:
+        return
+    datatype = common.ord(data[0])
+    if datatype == 0x8:
+        if len(data) >= 8:
+            crc = binascii.crc32(data) & 0xffffffff
+            if crc != 0xffffffff:
+                logging.warning('uncorrect CRC32, maybe wrong password or '
+                             'encryption method')
+                return None
+            cmd = common.ord(data[1])
+            request_id = struct.unpack('>H', data[2:4])[0]
+            data = data[4:-4]
+            return (cmd, request_id, data)
+        elif len(data) >= 6 and common.ord(data[1]) == 0x0:
+            crc = binascii.crc32(data) & 0xffffffff
+            if crc != 0xffffffff:
+                logging.warning('uncorrect CRC32, maybe wrong password or '
+                             'encryption method')
+                return None
+            cmd = common.ord(data[1])
+            data = data[2:-4]
+            return (cmd, 0, data)
+        else:
+            logging.warning('header too short, maybe wrong password or '
+                         'encryption method')
+            return None
+    return data
+
 
 class UDPRelay(object):
 
@@ -135,6 +176,8 @@ class UDPRelay(object):
             is_local,
             stat_callback=None,
             stat_counter=None):
+        self.multi_user_host_table = {}
+        self.is_cleaninglist = True
         self._config = config
         if config.get('connect_verbose_info', 0) > 0:
             common.connect_log = logging.info
@@ -166,7 +209,7 @@ class UDPRelay(object):
         self._cache_dns_client = lru_cache.LRUCache(
             timeout=10, close_callback=self._close_client_pair)
         self._client_fd_to_server_addr = {}
-        #self._dns_cache = lru_cache.LRUCache(timeout=1800)
+        # self._dns_cache = lru_cache.LRUCache(timeout=1800)
         self._eventloop = None
         self._closed = False
         self.server_transfer_ul = 0
@@ -228,7 +271,7 @@ class UDPRelay(object):
 
         self._timeouts = []  # a list for all the handlers
         # we trim the timeouts once a while
-        self._timeout_offset = 0   # last checked position for timeout
+        self._timeout_offset = 0  # last checked position for timeout
         self._handler_to_timeouts = {}  # key: handler value: index in timeouts
 
         self._bind = config.get('out_bind', '')
@@ -306,7 +349,7 @@ class UDPRelay(object):
                     logging.debug(
                         'close_client: %s' %
                         (self._client_fd_to_server_addr[
-                            client.fileno()],))
+                             client.fileno()],))
                 else:
                     client.info('close_client')
             self._sockets.remove(client.fileno())
@@ -318,49 +361,13 @@ class UDPRelay(object):
             client.info('close_client pass %s' % client)
             pass
 
-    def _pre_parse_udp_header(self, data):
-        if data is None:
-            return
-        datatype = common.ord(data[0])
-        if datatype == 0x8:
-            if len(data) >= 8:
-                crc = binascii.crc32(data) & 0xffffffff
-                if crc != 0xffffffff:
-                    logging.warn('uncorrect CRC32, maybe wrong password or '
-                                 'encryption method')
-                    return None
-                cmd = common.ord(data[1])
-                request_id = struct.unpack('>H', data[2:4])[0]
-                data = data[4:-4]
-                return (cmd, request_id, data)
-            elif len(data) >= 6 and common.ord(data[1]) == 0x0:
-                crc = binascii.crc32(data) & 0xffffffff
-                if crc != 0xffffffff:
-                    logging.warn('uncorrect CRC32, maybe wrong password or '
-                                 'encryption method')
-                    return None
-                cmd = common.ord(data[1])
-                data = data[2:-4]
-                return (cmd, 0, data)
-            else:
-                logging.warn('header too short, maybe wrong password or '
-                             'encryption method')
-                return None
-        return data
-
-    def _pack_rsp_data(self, cmd, request_id, data):
-        _rand_data = b"123456789abcdefghijklmnopqrstuvwxyz" * 2
-        reqid_str = struct.pack(">H", request_id)
-        return b''.join([CMD_VER_STR, common.chr(cmd), reqid_str, data, _rand_data[
-                        :random.randint(0, len(_rand_data))], reqid_str])
-
     def _handel_protocol_error(self, client_address, ogn_data):
-        #raise Exception('can not parse header')
-        logging.warn(
+        # raise Exception('can not parse header')
+        logging.warning(
             "Protocol ERROR, UDP ogn data %s from %s:%d" %
             (binascii.hexlify(ogn_data), client_address[0], client_address[1]))
         if client_address[0] not in self.wrong_iplist and client_address[
-                0] != 0 and self.is_cleaning_wrong_iplist == False:
+            0] != 0 and self.is_cleaning_wrong_iplist == False:
             self.wrong_iplist[client_address[0]] = time.time()
 
     def _get_relay_host(self, client_address, ogn_data):
@@ -378,7 +385,7 @@ class UDPRelay(object):
         if port is None:
             raise Exception('can not parse header')
         data = b"\x03" + common.to_bytes(common.chr(len(host))) + \
-            common.to_bytes(host) + struct.pack('>H', port)
+               common.to_bytes(host) + struct.pack('>H', port)
         return (data + ogn_data, True)
 
     def _get_mu_relay_host(self, ogn_data, uid):
@@ -388,20 +395,23 @@ class UDPRelay(object):
 
         for id in self._relay_rules:
             if (self._relay_rules[id]['user_id'] == 0 and uid !=
-                    0) or self._relay_rules[id]['user_id'] == uid:
+                0) or self._relay_rules[id]['user_id'] == uid:
                 has_higher_priority = False
                 for priority_id in self._relay_rules:
                     if (
-                        (
-                            self._relay_rules[priority_id]['priority'] > self._relay_rules[id]['priority'] and self._relay_rules[id]['id'] != self._relay_rules[priority_id]['id']) or (
-                            self._relay_rules[priority_id]['priority'] == self._relay_rules[id]['priority'] and self._relay_rules[id]['id'] > self._relay_rules[priority_id]['id'])) and (
-                            self._relay_rules[priority_id]['user_id'] == uid or self._relay_rules[priority_id]['user_id'] == 0):
+                            (
+                                    self._relay_rules[priority_id]['priority'] > self._relay_rules[id]['priority'] and
+                                    self._relay_rules[id]['id'] != self._relay_rules[priority_id]['id']) or (
+                                    self._relay_rules[priority_id]['priority'] == self._relay_rules[id]['priority'] and
+                                    self._relay_rules[id]['id'] > self._relay_rules[priority_id]['id'])) and (
+                            self._relay_rules[priority_id]['user_id'] == uid or self._relay_rules[priority_id][
+                        'user_id'] == 0):
                         has_higher_priority = True
                         continue
 
                 if has_higher_priority:
                     continue
-					
+
                 if self._relay_rules[id]['dist_ip'] == '0.0.0.0':
                     continue
 
@@ -421,7 +431,7 @@ class UDPRelay(object):
         if port is None:
             raise Exception('can not parse header')
         data = b"\x03" + common.to_bytes(common.chr(len(host))) + \
-            common.to_bytes(host) + struct.pack('>H', port)
+               common.to_bytes(host) + struct.pack('>H', port)
         return (data + ogn_data, True)
 
     def _is_relay(self, client_address, ogn_data, uid):
@@ -466,15 +476,15 @@ class UDPRelay(object):
         if self._is_local:
             frag = common.ord(data[2])
             if frag != 0:
-                logging.warn('drop a message since frag is not 0')
+                logging.warning('drop a message since frag is not 0')
                 return
             else:
                 data = data[3:]
         else:
             try:
                 data, key, ref_iv = encrypt.decrypt_all(self._password,
-                                                    self._method,
-                                                    data)
+                                                        self._method,
+                                                        data)
             except Exception:
                 logging.debug('UDP handle_server: decrypt data failed')
                 return
@@ -508,13 +518,13 @@ class UDPRelay(object):
 
         is_relay = False
 
-        #logging.info("UDP data %s" % (binascii.hexlify(data),))
+        # logging.info("UDP data %s" % (binascii.hexlify(data),))
         if not self._is_local:
 
             if not self._is_relay(r_addr, ogn_data, uid):
                 data = pre_parse_header(data)
 
-                data = self._pre_parse_udp_header(data)
+                data = _pre_parse_udp_header(data)
                 if data is None:
                     return
 
@@ -546,13 +556,15 @@ class UDPRelay(object):
 
         if (addrtype & 7) == 3:
             af = common.is_ip(server_addr)
-            if af == False:
+            if not af:
                 handler = common.UDPAsyncDNSHandler((data, r_addr, uid, header_length, is_relay))
                 handler.resolve(self._dns_resolver, (server_addr, server_port), self._handle_server_dns_resolved)
             else:
-                self._handle_server_dns_resolved("", (server_addr, server_port), server_addr, (data, r_addr, uid, header_length, is_relay))
+                self._handle_server_dns_resolved("", (server_addr, server_port), server_addr,
+                                                 (data, r_addr, uid, header_length, is_relay))
         else:
-            self._handle_server_dns_resolved("", (server_addr, server_port), server_addr, (data, r_addr, uid, header_length, is_relay))
+            self._handle_server_dns_resolved("", (server_addr, server_port), server_addr,
+                                             (data, r_addr, uid, header_length, is_relay))
 
     def _handle_server_dns_resolved(self, error, remote_addr, server_addr, params):
         if error:
@@ -567,8 +579,8 @@ class UDPRelay(object):
         try:
             server_port = remote_addr[1]
             addrs = socket.getaddrinfo(server_addr, server_port, 0,
-                                        socket.SOCK_DGRAM, socket.SOL_UDP)
-            if not addrs: # drop
+                                       socket.SOCK_DGRAM, socket.SOL_UDP)
+            if not addrs:  # drop
                 return
             af, socktype, proto, canonname, sa = addrs[0]
             server_addr = sa[0]
@@ -615,11 +627,12 @@ class UDPRelay(object):
                 client.setblocking(False)
                 self._socket_bind_addr(client, af, is_relay)
                 is_dns = False
-                if len(data) > header_length + 13 and data[header_length + 4 : header_length + 12] == b"\x00\x01\x00\x00\x00\x00\x00\x00":
+                if len(data) > header_length + 13 and data[
+                                                      header_length + 4: header_length + 12] == b"\x00\x01\x00\x00\x00\x00\x00\x00":
                     is_dns = True
                 else:
                     pass
-                if sa[1] == 53 and is_dns: #DNS
+                if sa[1] == 53 and is_dns:  # DNS
                     logging.debug("DNS query %s from %s:%d" % (common.to_str(sa[0]), r_addr[0], r_addr[1]))
                     self._cache_dns_client[key] = (client, uid)
                 else:
@@ -638,7 +651,7 @@ class UDPRelay(object):
                                 str(data)):
                             if self._config['is_multi_user'] != 0 and uid != 0:
                                 if self.is_cleaning_mu_detect_log_list == False and id not in self.mu_detect_log_list[
-                                        uid]:
+                                    uid]:
                                     self.mu_detect_log_list[uid].append(id)
                             else:
                                 if self.is_cleaning_detect_log == False and id not in self.detect_log_list:
@@ -647,11 +660,11 @@ class UDPRelay(object):
                                 'This connection match the regex: id:%d was reject,regex: %s ,connecting %s:%d from %s:%d via port %d' %
                                 (self.detect_text_list[id]['id'],
                                  self.detect_text_list[id]['regex'],
-                                    common.to_str(server_addr),
-                                    server_port,
-                                    r_addr[0],
-                                    r_addr[1],
-                                    self._listen_port))
+                                 common.to_str(server_addr),
+                                 server_port,
+                                 r_addr[0],
+                                 r_addr[1],
+                                 self._listen_port))
                 if not self.is_pushing_detect_hex_list:
                     for id in self.detect_hex_list:
                         if common.match_regex(
@@ -659,7 +672,7 @@ class UDPRelay(object):
                                 binascii.hexlify(data)):
                             if self._config['is_multi_user'] != 0 and uid != 0:
                                 if self.is_cleaning_mu_detect_log_list == False and id not in self.mu_detect_log_list[
-                                        uid]:
+                                    uid]:
                                     self.mu_detect_log_list[uid].append(id)
                             else:
                                 if self.is_cleaning_detect_log == False and id not in self.detect_log_list:
@@ -668,11 +681,11 @@ class UDPRelay(object):
                                 'This connection match the regex: id:%d was reject,regex: %s ,connecting %s:%d from %s:%d via port %d' %
                                 (self.detect_hex_list[id]['id'],
                                  self.detect_hex_list[id]['regex'],
-                                    common.to_str(server_addr),
-                                    server_port,
-                                    r_addr[0],
-                                    r_addr[1],
-                                    self._listen_port))
+                                 common.to_str(server_addr),
+                                 server_port,
+                                 r_addr[0],
+                                 r_addr[1],
+                                 self._listen_port))
                 if not self._connect_hex_data:
                     common.connect_log('UDP data to %s:%d from %s:%d via port %d' %
                                        (common.to_str(server_addr), server_port,
@@ -683,15 +696,15 @@ class UDPRelay(object):
                         (common.to_str(server_addr),
                          server_port,
                          r_addr[0],
-                            r_addr[1],
-                            self._listen_port,
-                            binascii.hexlify(data)))
+                         r_addr[1],
+                         self._listen_port,
+                         binascii.hexlify(data)))
                 if self._config['is_multi_user'] != 2:
                     if common.to_str(r_addr[0]) in self.wrong_iplist and r_addr[
-                            0] != 0 and self.is_cleaning_wrong_iplist == False:
+                        0] != 0 and self.is_cleaning_wrong_iplist == False:
                         del self.wrong_iplist[common.to_str(r_addr[0])]
                     if common.getRealIp(r_addr[0]) not in self.connected_iplist and r_addr[
-                            0] != 0 and self.is_cleaning_connected_iplist == False:
+                        0] != 0 and self.is_cleaning_connected_iplist == False:
                         self.connected_iplist.append(common.getRealIp(r_addr[0]))
             else:
                 client, client_uid = client_pair
@@ -703,7 +716,7 @@ class UDPRelay(object):
                     key, ref_iv, m = encrypt.gen_key_iv(self._password, self._method)
                     self._protocol.obfs.server_info.iv = ref_iv[0]
                     data = self._protocol.client_udp_pre_encrypt(data)
-                    #logging.debug("%s" % (binascii.hexlify(data),))
+                    # logging.debug("%s" % (binascii.hexlify(data),))
                     data = encrypt.encrypt_all_m(key, ref_iv, m, self._method, data)
                 except Exception:
                     logging.debug("UDP handle_server: encrypt data failed")
@@ -723,10 +736,11 @@ class UDPRelay(object):
         try:
             client.sendto(data, (server_addr, server_port))
             self.add_transfer_u(client_uid, len(data))
-            if client_pair is None: # new request
+            if client_pair is None:  # new request
                 addr, port = client.getsockname()[:2]
                 common.connect_log('UDP data to %s(%s):%d from %s:%d by user %d' %
-                        (common.to_str(remote_addr[0]), common.to_str(server_addr), server_port, addr, port, user_id))
+                                   (common.to_str(remote_addr[0]), common.to_str(server_addr), server_port, addr, port,
+                                    user_id))
         except IOError as e:
             err = eventloop.errno_from_exception(e)
             logging.warning('IOError sendto %s:%d by user %d' % (server_addr, server_port, user_id))
@@ -777,7 +791,7 @@ class UDPRelay(object):
         else:
             try:
                 data, key, ref_iv = encrypt.decrypt_all(self._password,
-                                                    self._method, data)
+                                                        self._method, data)
             except Exception:
                 logging.debug('UDP handle_client: decrypt data failed')
                 return
@@ -788,8 +802,8 @@ class UDPRelay(object):
             header_result = parse_header(data)
             if header_result is None:
                 return
-            #connecttype, dest_addr, dest_port, header_length = header_result
-            #logging.debug('UDP handle_client %s:%d to %s:%d' % (common.to_str(r_addr[0]), r_addr[1], dest_addr, dest_port))
+            # connecttype, dest_addr, dest_port, header_length = header_result
+            # logging.debug('UDP handle_client %s:%d to %s:%d' % (common.to_str(r_addr[0]), r_addr[1], dest_addr, dest_port))
 
             response = b'\x00\x00\x00' + data
 
@@ -815,20 +829,15 @@ class UDPRelay(object):
             pass
 
     def write_to_server_socket(self, data, addr):
-        uncomplete = False
-        retry = 0
         try:
             self._server_socket.sendto(data, addr)
-            data = None
             while self._data_to_write_to_server_socket:
                 data_buf = self._data_to_write_to_server_socket[0]
-                retry = data_buf[1] + 1
                 del self._data_to_write_to_server_socket[0]
                 data, addr = data_buf[0]
                 self._server_socket.sendto(data, addr)
         except (OSError, IOError) as e:
             error_no = eventloop.errno_from_exception(e)
-            uncomplete = True
             if error_no in (errno.EWOULDBLOCK,):
                 pass
             else:
@@ -836,7 +845,7 @@ class UDPRelay(object):
                 return False
         # if uncomplete and data is not None and retry < 3:
         #    self._data_to_write_to_server_socket.append([(data, addr), retry])
-        #'''
+        # '''
 
     def add_to_loop(self, loop):
         if self._eventloop:
@@ -932,7 +941,7 @@ class UDPRelay(object):
                 if handler:
                     handler.handle_event(sock, event)
             else:
-                logging.warn('poll removed fd')
+                logging.warning('poll removed fd')
 
     def handle_periodic(self):
         if self._closed:
@@ -957,7 +966,6 @@ class UDPRelay(object):
             self._sweep_timeout()
 
     def connected_iplist_clean(self):
-        self.is_cleaninglist = True
         del self.connected_iplist[:]
         self.is_cleaning_connected_iplist = False
 
@@ -1008,7 +1016,6 @@ class UDPRelay(object):
 
     def modify_multi_user_table(self, new_table):
         self.multi_user_table = new_table.copy()
-        self.multi_user_host_table = {}
 
         self._protocol.obfs.server_info.users = self.multi_user_table
 

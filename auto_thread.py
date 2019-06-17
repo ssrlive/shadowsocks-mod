@@ -26,7 +26,7 @@ class AutoExec(object):
         value = subprocess.check_output(command.split(" ")).decode("utf-8")
         if configloader.get_config().API_INTERFACE == "modwebapi":
             global webapi
-            webapi.postApi(
+            webapi.post_api(
                 "func/autoexec",
                 {"node_id": configloader.get_config().NODE_ID},
                 {
@@ -71,7 +71,7 @@ class AutoExec(object):
     def auto_thread(self):
 
         if configloader.get_config().API_INTERFACE == "modwebapi":
-            rows = webapi.getApi(
+            rows = webapi.get_api(
                 "func/autoexec", {"node_id": configloader.get_config().NODE_ID}
             )
         else:
@@ -140,7 +140,7 @@ class AutoExec(object):
 
             if is_verified == 1:
                 if configloader.get_config().API_INTERFACE == "modwebapi":
-                    webapi.postApi(
+                    webapi.post_api(
                         "func/autoexec",
                         {"node_id": configloader.get_config().NODE_ID},
                         {
@@ -223,7 +223,7 @@ class AutoExec(object):
 
                     trace = traceback.format_exc()
                     logging.error(trace)
-                    # logging.warn('db thread except:%s' % e)
+                    # logging.warning('db thread except:%s' % e)
                 if db_instance.event.wait(60):
                     break
                 if db_instance.has_stopped:

@@ -57,34 +57,19 @@ def main():
     shell.check_python()
 
     if get_config().API_INTERFACE == "modwebapi":
-        threadMain = MainThread(web_transfer.WebTransfer)
+        thread_main = MainThread(web_transfer.WebTransfer)
     else:
-        threadMain = MainThread(db_transfer.DbTransfer)
-    threadMain.start()
+        thread_main = MainThread(db_transfer.DbTransfer)
+    thread_main.start()
 
-    threadSpeedtest = MainThread(speedtest_thread.Speedtest)
-    threadSpeedtest.start()
+    thread_speedtest = MainThread(speedtest_thread.Speedtest)
+    thread_speedtest.start()
 
-    threadAutoexec = MainThread(auto_thread.AutoExec)
-    threadAutoexec.start()
+    thread_autoexec = MainThread(auto_thread.AutoExec)
+    thread_autoexec.start()
 
-    threadAutoblock = MainThread(auto_block.AutoBlock)
-    threadAutoblock.start()
-
-    try:
-        while threadMain.is_alive():
-            threadMain.join(10.0)
-    except (KeyboardInterrupt, IOError, OSError) as e:
-        import traceback
-
-        traceback.print_exc()
-        threadMain.stop()
-        if threadSpeedtest.is_alive():
-            threadSpeedtest.stop()
-        if threadAutoexec.is_alive():
-            threadAutoexec.stop()
-        if threadAutoblock.is_alive():
-            threadAutoblock.stop()
+    thread_autoblock = MainThread(auto_block.AutoBlock)
+    thread_autoblock.start()
 
 
 if __name__ == "__main__":

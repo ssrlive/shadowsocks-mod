@@ -12,34 +12,36 @@ import configloader
 from shadowsocks import common
 
 
+def file_len(fname):
+    return sum(1 for line in open(fname))
+
+
+def get_ip(text):
+    if common.match_ipv4_address(text) is not None:
+        return common.match_ipv4_address(text)
+    else:
+        if common.match_ipv6_address(text) is not None:
+            return common.match_ipv6_address(text)
+    return None
+
+
 class AutoBlock(object):
     def __init__(self):
         import threading
 
         self.event = threading.Event()
-        self.start_line = self.file_len("/etc/hosts.deny")
+        self.start_line = file_len("/etc/hosts.deny")
         self.has_stopped = False
 
-    def get_ip(self, text):
-        if common.match_ipv4_address(text) is not None:
-            return common.match_ipv4_address(text)
-        else:
-            if common.match_ipv6_address(text) is not None:
-                return common.match_ipv6_address(text)
-        return None
-
-    def file_len(self, fname):
-        return sum(1 for line in open(fname))
-
     def auto_block_thread(self):
-        global webapi
+        global webapi, conn
         server_ip = socket.gethostbyname(configloader.get_config().MYSQL_HOST)
 
         if configloader.get_config().API_INTERFACE == "modwebapi":
             # 读取节点IP
             # SELECT * FROM `ss_node`  where `node_ip` != ''
             node_ip_list = []
-            data = webapi.getApi("nodes")
+            data = webapi.get_api("nodes")
             for node in data:
                 temp_list = node["node_ip"].split(",")
                 node_ip_list.append(temp_list[0])
@@ -94,8 +96,8 @@ class AutoBlock(object):
         denyed_ip_list = []
         data = []
         for line in real_deny_list:
-            if self.get_ip(line) and line.find("#") != 0:
-                ip = self.get_ip(line)
+            if get_ip(line) and line.find("#") != 0:
+                ip = get_ip(line)
 
                 if str(ip).find(str(server_ip)) != -1:
                     i = 0
@@ -166,14 +168,14 @@ class AutoBlock(object):
                     denyed_ip_list.append(ip)
 
         if configloader.get_config().API_INTERFACE == "modwebapi":
-            webapi.postApi(
+            webapi.post_api(
                 "func/block_ip",
                 {"node_id": configloader.get_config().NODE_ID},
                 {"data": data},
             )
 
         if configloader.get_config().API_INTERFACE == "modwebapi":
-            rows = webapi.getApi("func/block_ip")
+            rows = webapi.get_api("func/block_ip")
         else:
             cur = conn.cursor()
             cur.execute(
@@ -188,10 +190,10 @@ class AutoBlock(object):
         for row in rows:
             if configloader.get_config().API_INTERFACE == "modwebapi":
                 node = row["nodeid"]
-                ip = self.get_ip(row["ip"])
+                ip = get_ip(row["ip"])
             else:
                 node = row[1]
-                ip = self.get_ip(row[2])
+                ip = get_ip(row[2])
 
             if ip is not None:
 
@@ -248,7 +250,7 @@ class AutoBlock(object):
             deny_file.close()
 
         if configloader.get_config().API_INTERFACE == "modwebapi":
-            rows = webapi.getApi("func/unblock_ip")
+            rows = webapi.get_api("func/unblock_ip")
         else:
             cur = conn.cursor()
             cur.execute(
@@ -291,7 +293,7 @@ class AutoBlock(object):
             deny_file.write(line)
         deny_file.close()
 
-        self.start_line = self.file_len("/etc/hosts.deny")
+        self.start_line = file_len("/etc/hosts.deny")
 
     @staticmethod
     def thread_db(obj):
@@ -319,7 +321,7 @@ class AutoBlock(object):
 
                     trace = traceback.format_exc()
                     logging.error(trace)
-                    # logging.warn('db thread except:%s' % e)
+                    # logging.warning('db thread except:%s' % e)
                 if db_instance.event.wait(60):
                     break
                 if db_instance.has_stopped:

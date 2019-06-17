@@ -25,6 +25,7 @@ import signal
 
 if __name__ == '__main__':
     import inspect
+
     file_path = os.path.dirname(
         os.path.realpath(
             inspect.getfile(
@@ -106,7 +107,7 @@ def main():
         if 'server_ipv6' in a_config:
             try:
                 if len(a_config['server_ipv6']) > 2 and a_config['server_ipv6'][
-                        0] == "[" and a_config['server_ipv6'][-1] == "]":
+                    0] == "[" and a_config['server_ipv6'][-1] == "]":
                     a_config['server_ipv6'] = a_config['server_ipv6'][1:-1]
                 a_config['server_port'] = int(port)
                 a_config['password'] = password
@@ -168,14 +169,16 @@ def main():
 
     def run_server():
         def child_handler(signum, _):
-            logging.warn('received SIGQUIT, doing graceful shutting down..')
+            logging.warning('received SIGQUIT, doing graceful shutting down..')
             list(map(lambda s: s.close(next_tick=True),
                      tcp_servers + udp_servers))
+
         signal.signal(getattr(signal, 'SIGQUIT', signal.SIGTERM),
                       child_handler)
 
         def int_handler(signum, _):
             sys.exit(1)
+
         signal.signal(signal.SIGINT, int_handler)
 
         try:
@@ -211,6 +214,7 @@ def main():
                         except OSError:  # child may already exited
                             pass
                     sys.exit()
+
                 signal.signal(signal.SIGTERM, handler)
                 signal.signal(signal.SIGQUIT, handler)
                 signal.signal(signal.SIGINT, handler)
@@ -225,7 +229,7 @@ def main():
                 for child in children:
                     os.waitpid(child, 0)
         else:
-            logging.warn('worker is only available on Unix/Linux')
+            logging.warning('worker is only available on Unix/Linux')
             run_server()
     else:
         run_server()

@@ -12,8 +12,9 @@ class WebApi(object):
     def __init__(self):
         self.session_pool = requests.Session()
 
-    def getApi(self, uri, params={}):
-        res = None
+    def get_api(self, uri, params=None):
+        if params is None:
+            params = {}
         try:
             uri_params = params.copy()
             uri_params["key"] = get_config().WEBAPI_TOKEN
@@ -26,11 +27,11 @@ class WebApi(object):
                 data = res.json()
             except Exception:
                 if res:
-                    logging.error("Error data:%s" % (res.text))
+                    logging.error("Error data:%s" % res.text)
                 raise Exception("error data!")
             if data["ret"] == 0:
-                logging.error("Error data:%s" % (res.text))
-                logging.error("request %s error!wrong ret!" % (uri))
+                logging.error("Error data:%s" % res.text)
+                logging.error("request %s error!wrong ret!" % uri)
                 raise Exception("wrong ret!")
             return data["data"]
         except Exception:
@@ -40,8 +41,11 @@ class WebApi(object):
             logging.error(trace)
             raise Exception("network issue or server error!")
 
-    def postApi(self, uri, params={}, raw_data={}):
-        res = None
+    def post_api(self, uri, params=None, raw_data=None):
+        if params is None:
+            params = {}
+        if raw_data is None:
+            raw_data = {}
         try:
             uri_params = params.copy()
             uri_params["key"] = get_config().WEBAPI_TOKEN
@@ -55,11 +59,11 @@ class WebApi(object):
                 data = res.json()
             except Exception:
                 if res:
-                    logging.error("Error data:%s" % (res.text))
+                    logging.error("Error data:%s" % res.text)
                 raise Exception("error data!")
             if data["ret"] == 0:
-                logging.error("Error data:%s" % (res.text))
-                logging.error("request %s error!wrong ret!" % (uri))
+                logging.error("Error data:%s" % res.text)
+                logging.error("request %s error!wrong ret!" % uri)
                 raise Exception("wrong ret!")
             return data["data"]
         except Exception:

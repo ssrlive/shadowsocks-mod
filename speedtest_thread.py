@@ -20,7 +20,6 @@ class Speedtest(object):
             return
 
         logging.info("Speedtest starting...You can't stop right now!")
-        CTid = 0
         speedtest_ct = speedtest.Speedtest()
         speedtest_ct.get_servers()
         servers_list = []
@@ -43,7 +42,6 @@ class Speedtest(object):
                 str(round((results_ct.upload / 1000 / 1000), 2)) + " Mbit/s"
         )
 
-        CUid = 0
         speedtest_cu = speedtest.Speedtest()
         speedtest_cu.get_servers()
         servers_list = []
@@ -66,7 +64,6 @@ class Speedtest(object):
                 str(round((results_cu.upload / 1000 / 1000), 2)) + " Mbit/s"
         )
 
-        CMid = 0
         speedtest_cm = speedtest.Speedtest()
         speedtest_cm.get_servers()
         servers_list = []
@@ -90,7 +87,7 @@ class Speedtest(object):
         )
 
         if configloader.get_config().API_INTERFACE == "modwebapi":
-            webapi.postApi(
+            webapi.post_api(
                 "func/speedtest",
                 {"node_id": configloader.get_config().NODE_ID},
                 {
@@ -180,24 +177,6 @@ class Speedtest(object):
         global db_instance
         db_instance = obj()
 
-        try:
-            while True:
-                try:
-                    db_instance.speedtest_thread()
-                except Exception as e:
-                    import traceback
-
-                    trace = traceback.format_exc()
-                    logging.error(trace)
-                    # logging.warn('db thread except:%s' % e)
-                if db_instance.event.wait(
-                        configloader.get_config().SPEEDTEST * 3600
-                ):
-                    break
-                if db_instance.has_stopped:
-                    break
-        except KeyboardInterrupt as e:
-            pass
         db_instance = None
 
     @staticmethod

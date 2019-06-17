@@ -240,7 +240,7 @@ def test_encryptor():
     from os import urandom
     plain = urandom(10240)
     for method in CIPHERS_TO_TEST:
-        logging.warn(method)
+        logging.warning(method)
         encryptor = Encryptor(b'key', method)
         decryptor = Encryptor(b'key', method)
         cipher = encryptor.encrypt(plain)
@@ -252,7 +252,7 @@ def test_encrypt_all():
     from os import urandom
     plain = urandom(10240)
     for method in CIPHERS_TO_TEST:
-        logging.warn(method)
+        logging.warning(method)
         cipher = encrypt_all(b'key', method, plain)
         plain2, key, iv = decrypt_all(b'key', method, cipher)
         assert plain == plain2
@@ -262,7 +262,7 @@ def test_encrypt_all_m():
     from os import urandom
     plain = urandom(10240)
     for method in CIPHERS_TO_TEST:
-        logging.warn(method)
+        logging.warning(method)
         key, iv, m = gen_key_iv(b'key', method)
         cipher = encrypt_all_m(key, iv, m, method, plain)
         plain2, key, iv = decrypt_all(b'key', method, cipher)

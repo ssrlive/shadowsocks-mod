@@ -2,22 +2,73 @@
 # -*- coding: UTF-8 -*-
 
 import logging
-import time
 import sys
 import os
 import socket
 from server_pool import ServerPool
 import traceback
-from shadowsocks import common, shell, lru_cache
+from shadowsocks import common, shell
 from configloader import load_config, get_config
 import importloader
 import platform
-import datetime
 import fcntl
-
 
 switchrule = None
 db_instance = None
+
+
+def is_all_thread_alive():
+    if not ServerPool.get_instance().thread.is_alive():
+        return False
+    return True
+
+
+def new_server(port, passwd, cfg):
+    protocol = cfg.get(
+        'protocol',
+        ServerPool.get_instance().config.get(
+            'protocol',
+            'origin'))
+    method = cfg.get(
+        'method', ServerPool.get_instance().config.get('method', 'None'))
+    obfs = cfg.get(
+        'obfs', ServerPool.get_instance().config.get('obfs', 'plain'))
+    logging.info(
+        'db start server at port [%s] pass [%s] protocol [%s] method [%s] obfs [%s]' %
+        (port, passwd, protocol, method, obfs))
+    ServerPool.new_server(port, cfg)
+
+
+def cmp(val1, val2):
+    if isinstance(val1, bytes):
+        val1 = common.to_str(val1)
+    if isinstance(val2, bytes):
+        val2 = common.to_str(val2)
+    return val1 == val2
+
+
+def trafficShow(Traffic):
+    if Traffic < 1024:
+        return str(round((Traffic), 2)) + "B"
+
+    if Traffic < 1024 * 1024:
+        return str(round((Traffic / 1024), 2)) + "KB"
+
+    if Traffic < 1024 * 1024 * 1024:
+        return str(round((Traffic / 1024 / 1024), 2)) + "MB"
+
+    return str(round((Traffic / 1024 / 1024 / 1024), 2)) + "GB"
+
+
+def load():
+    import os
+    return os.popen(
+        "cat /proc/loadavg | awk '{ print $1\" \"$2\" \"$3 }'").readlines()[0][:-2]
+
+
+def uptime():
+    with open('/proc/uptime', 'r') as f:
+        return float(f.readline().split()[0])
 
 
 class DbTransfer(object):
@@ -95,25 +146,26 @@ class DbTransfer(object):
             alive_user_count = alive_user_count + 1
 
             cur = conn.cursor()
-            cur.execute("INSERT INTO `user_traffic_log` (`id`, `user_id`, `u`, `d`, `Node_ID`, `rate`, `traffic`, `log_time`) VALUES (NULL, '" +
-                        str(self.port_uid_table[id]) +
-                        "', '" +
-                        str(dt_transfer[id][0]) +
-                        "', '" +
-                        str(dt_transfer[id][1]) +
-                        "', '" +
-                        str(get_config().NODE_ID) +
-                        "', '" +
-                        str(self.traffic_rate) +
-                        "', '" +
-                        self.trafficShow((dt_transfer[id][0] +
-                                          dt_transfer[id][1]) *
-                                         self.traffic_rate) +
-                        "', unix_timestamp()); ")
+            cur.execute(
+                "INSERT INTO `user_traffic_log` (`id`, `user_id`, `u`, `d`, `Node_ID`, `rate`, `traffic`, `log_time`) VALUES (NULL, '" +
+                str(self.port_uid_table[id]) +
+                "', '" +
+                str(dt_transfer[id][0]) +
+                "', '" +
+                str(dt_transfer[id][1]) +
+                "', '" +
+                str(get_config().NODE_ID) +
+                "', '" +
+                str(self.traffic_rate) +
+                "', '" +
+                trafficShow((dt_transfer[id][0] +
+                                  dt_transfer[id][1]) *
+                                 self.traffic_rate) +
+                "', unix_timestamp()); ")
             cur.close()
 
             bandwidth_thistime = bandwidth_thistime + \
-                (dt_transfer[id][0] + dt_transfer[id][1])
+                                 (dt_transfer[id][0] + dt_transfer[id][1])
 
             if query_sub_in is not None:
                 query_sub_in += ',%s' % id
@@ -121,9 +173,9 @@ class DbTransfer(object):
                 query_sub_in = '%s' % id
         if query_sub_when != '':
             query_sql = query_head + ' SET u = CASE port' + query_sub_when + \
-                ' END, d = CASE port' + query_sub_when2 + \
-                ' END, t = unix_timestamp() ' + \
-                ' WHERE port IN (%s)' % query_sub_in
+                        ' END, d = CASE port' + query_sub_when2 + \
+                        ' END, t = unix_timestamp() ' + \
+                        ' WHERE port IN (%s)' % query_sub_in
 
             cur = conn.cursor()
             cur.execute(query_sql)
@@ -146,7 +198,8 @@ class DbTransfer(object):
 
         cur = conn.cursor()
         cur.execute("INSERT INTO `ss_node_info` (`id`, `node_id`, `uptime`, `load`, `log_time`) VALUES (NULL, '" +
-                    str(get_config().NODE_ID) + "', '" + str(self.uptime()) + "', '" + str(self.load()) + "', unix_timestamp()); ")
+                    str(get_config().NODE_ID) + "', '" + str(uptime()) + "', '" + str(
+            load()) + "', unix_timestamp()); ")
         cur.close()
 
         online_iplist = ServerPool.get_instance().get_servers_iplist()
@@ -154,15 +207,18 @@ class DbTransfer(object):
             for ip in online_iplist[id]:
                 cur = conn.cursor()
                 cur.execute("INSERT INTO `alive_ip` (`id`, `nodeid`,`userid`, `ip`, `datetime`) VALUES (NULL, '" + str(
-                    get_config().NODE_ID) + "','" + str(self.port_uid_table[id]) + "', '" + str(ip) + "', unix_timestamp())")
+                    get_config().NODE_ID) + "','" + str(self.port_uid_table[id]) + "', '" + str(
+                    ip) + "', unix_timestamp())")
                 cur.close()
 
         detect_log_list = ServerPool.get_instance().get_servers_detect_log()
         for port in detect_log_list.keys():
             for rule_id in detect_log_list[port]:
                 cur = conn.cursor()
-                cur.execute("INSERT INTO `detect_log` (`id`, `user_id`, `list_id`, `datetime`, `node_id`) VALUES (NULL, '" + str(
-                    self.port_uid_table[port]) + "', '" + str(rule_id) + "', UNIX_TIMESTAMP(), '" + str(get_config().NODE_ID) + "')")
+                cur.execute(
+                    "INSERT INTO `detect_log` (`id`, `user_id`, `list_id`, `datetime`, `node_id`) VALUES (NULL, '" + str(
+                        self.port_uid_table[port]) + "', '" + str(rule_id) + "', UNIX_TIMESTAMP(), '" + str(
+                        get_config().NODE_ID) + "')")
                 cur.close()
 
         deny_str = ""
@@ -171,10 +227,9 @@ class DbTransfer(object):
             server_ip = socket.gethostbyname(get_config().MYSQL_HOST)
             for id in wrong_iplist.keys():
                 for ip in wrong_iplist[id]:
-                    realip = ""
                     is_ipv6 = False
                     if common.is_ip(ip):
-                        if(common.is_ip(ip) == socket.AF_INET):
+                        if common.is_ip(ip) == socket.AF_INET:
                             realip = ip
                         else:
                             if common.match_ipv4_address(ip) is not None:
@@ -227,7 +282,7 @@ class DbTransfer(object):
                                 'ip -6 route add ::1/128 via %s/128' %
                                 str(realip))
                             deny_str = deny_str + \
-                                "\nALL: [" + str(realip) + "]/128"
+                                       "\nALL: [" + str(realip) + "]/128"
 
                         logging.info("Local Block ip:" + str(realip))
                 if get_config().CLOUDSAFE == 0:
@@ -237,27 +292,6 @@ class DbTransfer(object):
                     deny_file.close()
         conn.close()
         return update_transfer
-
-    def uptime(self):
-        with open('/proc/uptime', 'r') as f:
-            return float(f.readline().split()[0])
-
-    def load(self):
-        import os
-        return os.popen(
-            "cat /proc/loadavg | awk '{ print $1\" \"$2\" \"$3 }'").readlines()[0][:-2]
-
-    def trafficShow(self, Traffic):
-        if Traffic < 1024:
-            return str(round((Traffic), 2)) + "B"
-
-        if Traffic < 1024 * 1024:
-            return str(round((Traffic / 1024), 2)) + "KB"
-
-        if Traffic < 1024 * 1024 * 1024:
-            return str(round((Traffic / 1024 / 1024), 2)) + "MB"
-
-        return str(round((Traffic / 1024 / 1024 / 1024), 2)) + "GB"
 
     def push_db_all_user(self):
         # 更新用户流量到数据库
@@ -277,7 +311,7 @@ class DbTransfer(object):
                         curr_transfer[id][1] - last_transfer[id][1]]
                 else:
                     dt_transfer[id] = [curr_transfer[
-                        id][0], curr_transfer[id][1]]
+                                           id][0], curr_transfer[id][1]]
             else:
                 if curr_transfer[id][0] + curr_transfer[id][1] <= 0:
                     continue
@@ -285,35 +319,13 @@ class DbTransfer(object):
         for id in dt_transfer.keys():
             last = last_transfer.get(id, [0, 0])
             last_transfer[id] = [last[0] + dt_transfer[id]
-                                 [0], last[1] + dt_transfer[id][1]]
+            [0], last[1] + dt_transfer[id][1]]
         self.last_update_transfer = last_transfer.copy()
         self.update_all_user(dt_transfer)
 
     def pull_db_all_user(self):
         import cymysql
         # 数据库所有用户信息
-        try:
-            switchrule = importloader.load('switchrule')
-            keys = switchrule.getKeys()
-        except Exception as e:
-            keys = [
-                'id',
-                'port',
-                'u',
-                'd',
-                'transfer_enable',
-                'passwd',
-                'enable',
-                'method',
-                'protocol',
-                'protocol_param',
-                'obfs',
-                'obfs_param',
-                'node_speedlimit',
-                'forbidden_ip',
-                'forbidden_port',
-                'disconnect_ip',
-                'is_multi_user']
 
         if get_config().MYSQL_SSL_ENABLE == 1:
             conn = cymysql.connect(
@@ -339,8 +351,9 @@ class DbTransfer(object):
 
         cur = conn.cursor()
 
-        cur.execute("SELECT `node_group`,`node_class`,`node_speedlimit`,`traffic_rate`,`mu_only`,`sort` FROM ss_node where `id`='" +
-                    str(get_config().NODE_ID) + "' AND (`node_bandwidth`<`node_bandwidth_limit` OR `node_bandwidth_limit`=0)")
+        cur.execute(
+            "SELECT `node_group`,`node_class`,`node_speedlimit`,`traffic_rate`,`mu_only`,`sort` FROM ss_node where `id`='" +
+            str(get_config().NODE_ID) + "' AND (`node_bandwidth`<`node_bandwidth_limit` OR `node_bandwidth_limit`=0)")
         nodeinfo = cur.fetchone()
 
         if nodeinfo is None:
@@ -406,17 +419,13 @@ class DbTransfer(object):
             id = int(r[0])
             exist_id_list.append(id)
             if id not in self.detect_text_list:
-                d = {}
-                d['id'] = id
-                d['regex'] = str(r[1])
+                d = {'id': id, 'regex': str(r[1])}
                 self.detect_text_list[id] = d
                 self.detect_text_ischanged = True
             else:
                 if r[1] != self.detect_text_list[id]['regex']:
                     del self.detect_text_list[id]
-                    d = {}
-                    d['id'] = id
-                    d['regex'] = str(r[1])
+                    d = {'id': id, 'regex': str(r[1])}
                     self.detect_text_list[id] = d
                     self.detect_text_ischanged = True
 
@@ -441,17 +450,13 @@ class DbTransfer(object):
             id = int(r[0])
             exist_id_list.append(id)
             if r[0] not in self.detect_hex_list:
-                d = {}
-                d['id'] = id
-                d['regex'] = str(r[1])
+                d = {'id': id, 'regex': str(r[1])}
                 self.detect_hex_list[id] = d
                 self.detect_hex_ischanged = True
             else:
                 if r[1] != self.detect_hex_list[r[0]]['regex']:
                     del self.detect_hex_list[id]
-                    d = {}
-                    d['id'] = int(r[0])
-                    d['regex'] = str(r[1])
+                    d = {'id': int(r[0]), 'regex': str(r[1])}
                     self.detect_hex_list[id] = d
                     self.detect_hex_ischanged = True
 
@@ -480,12 +485,8 @@ class DbTransfer(object):
                         str(get_config().NODE_ID))
 
             for r in cur.fetchall():
-                d = {}
-                d['id'] = int(r[0])
-                d['user_id'] = int(r[1])
-                d['dist_ip'] = str(r[2])
-                d['port'] = int(r[3])
-                d['priority'] = int(r[4])
+                d = {'id': int(r[0]), 'user_id': int(r[1]), 'dist_ip': str(r[2]), 'port': int(r[3]),
+                     'priority': int(r[4])}
                 self.relay_rule_list[d['id']] = d
 
             cur.close()
@@ -493,22 +494,11 @@ class DbTransfer(object):
         conn.close()
         return rows
 
-    def cmp(self, val1, val2):
-        if isinstance(val1, bytes):
-            val1 = common.to_str(val1)
-        if isinstance(val2, bytes):
-            val2 = common.to_str(val2)
-        return val1 == val2
-
     def del_server_out_of_bound_safe(self, last_rows, rows):
         # 停止超流量的服务
         # 启动没超流量的服务
         # 需要动态载入switchrule，以便实时修改规则
 
-        try:
-            switchrule = importloader.load('switchrule')
-        except Exception as e:
-            logging.error('load switchrule.py fail')
         cur_servers = {}
         new_servers = {}
 
@@ -574,16 +564,12 @@ class DbTransfer(object):
             merge_config_keys = ['password'] + read_config_keys
             for name in cfg.keys():
                 if hasattr(cfg[name], 'encode'):
-                    try:
-                        cfg[name] = cfg[name].encode('utf-8')
-                    except Exception as e:
-                        logging.warning(
-                            'encode cfg key "%s" fail, val "%s"' % (name, cfg[name]))
+                    pass
 
             if 'node_speedlimit' in cfg:
                 if float(
                         self.node_speedlimit) > 0.0 or float(
-                        cfg['node_speedlimit']) > 0.0:
+                    cfg['node_speedlimit']) > 0.0:
                     cfg['node_speedlimit'] = max(
                         float(
                             self.node_speedlimit), float(
@@ -626,16 +612,24 @@ class DbTransfer(object):
             if self.is_relay and row['is_multi_user'] != 2:
                 temp_relay_rules = {}
                 for id in self.relay_rule_list:
-                    if ((self.relay_rule_list[id]['user_id'] == user_id or self.relay_rule_list[id]['user_id'] == 0) or row[
-                            'is_multi_user'] != 0) and (self.relay_rule_list[id]['port'] == 0 or self.relay_rule_list[id]['port'] == port):
+                    if ((self.relay_rule_list[id]['user_id'] == user_id or self.relay_rule_list[id]['user_id'] == 0) or
+                        row[
+                            'is_multi_user'] != 0) and (
+                            self.relay_rule_list[id]['port'] == 0 or self.relay_rule_list[id]['port'] == port):
                         has_higher_priority = False
                         for priority_id in self.relay_rule_list:
                             if (
                                     (
-                                        self.relay_rule_list[priority_id]['priority'] > self.relay_rule_list[id]['priority'] and self.relay_rule_list[id]['id'] != self.relay_rule_list[priority_id]['id']) or (
-                                        self.relay_rule_list[priority_id]['priority'] == self.relay_rule_list[id]['priority'] and self.relay_rule_list[id]['id'] > self.relay_rule_list[priority_id]['id'])) and (
-                                    self.relay_rule_list[priority_id]['user_id'] == user_id or self.relay_rule_list[priority_id]['user_id'] == 0) and (
-                                    self.relay_rule_list[priority_id]['port'] == port or self.relay_rule_list[priority_id]['port'] == 0):
+                                            self.relay_rule_list[priority_id]['priority'] > self.relay_rule_list[id][
+                                        'priority'] and self.relay_rule_list[id]['id'] !=
+                                            self.relay_rule_list[priority_id]['id']) or (
+                                            self.relay_rule_list[priority_id]['priority'] == self.relay_rule_list[id][
+                                        'priority'] and self.relay_rule_list[id]['id'] >
+                                            self.relay_rule_list[priority_id]['id'])) and (
+                                    self.relay_rule_list[priority_id]['user_id'] == user_id or
+                                    self.relay_rule_list[priority_id]['user_id'] == 0) and (
+                                    self.relay_rule_list[priority_id]['port'] == port or
+                                    self.relay_rule_list[priority_id]['port'] == 0):
                                 has_higher_priority = True
                                 continue
 
@@ -696,16 +690,24 @@ class DbTransfer(object):
                 if self.is_relay and row['is_multi_user'] != 2:
                     temp_relay_rules = {}
                     for id in self.relay_rule_list:
-                        if ((self.relay_rule_list[id]['user_id'] == user_id or self.relay_rule_list[id]['user_id'] == 0) or row[
-                                'is_multi_user'] != 0) and (self.relay_rule_list[id]['port'] == 0 or self.relay_rule_list[id]['port'] == port):
+                        if ((self.relay_rule_list[id]['user_id'] == user_id or self.relay_rule_list[id][
+                            'user_id'] == 0) or row[
+                                'is_multi_user'] != 0) and (
+                                self.relay_rule_list[id]['port'] == 0 or self.relay_rule_list[id]['port'] == port):
                             has_higher_priority = False
                             for priority_id in self.relay_rule_list:
                                 if (
                                         (
-                                            self.relay_rule_list[priority_id]['priority'] > self.relay_rule_list[id]['priority'] and self.relay_rule_list[id]['id'] != self.relay_rule_list[priority_id]['id']) or (
-                                            self.relay_rule_list[priority_id]['priority'] == self.relay_rule_list[id]['priority'] and self.relay_rule_list[id]['id'] > self.relay_rule_list[priority_id]['id'])) and (
-                                        self.relay_rule_list[priority_id]['user_id'] == user_id or self.relay_rule_list[priority_id]['user_id'] == 0) and (
-                                        self.relay_rule_list[priority_id]['port'] == port or self.relay_rule_list[priority_id]['port'] == 0):
+                                                self.relay_rule_list[priority_id]['priority'] >
+                                                self.relay_rule_list[id]['priority'] and self.relay_rule_list[id][
+                                                    'id'] != self.relay_rule_list[priority_id]['id']) or (
+                                                self.relay_rule_list[priority_id]['priority'] ==
+                                                self.relay_rule_list[id]['priority'] and self.relay_rule_list[id][
+                                                    'id'] > self.relay_rule_list[priority_id]['id'])) and (
+                                        self.relay_rule_list[priority_id]['user_id'] == user_id or
+                                        self.relay_rule_list[priority_id]['user_id'] == 0) and (
+                                        self.relay_rule_list[priority_id]['port'] == port or
+                                        self.relay_rule_list[priority_id]['port'] == 0):
                                     has_higher_priority = True
                                     continue
 
@@ -713,7 +715,7 @@ class DbTransfer(object):
                                 continue
 
                             if self.relay_rule_list[id][
-                                    'dist_ip'] == '0.0.0.0' and row['is_multi_user'] == 0:
+                                'dist_ip'] == '0.0.0.0' and row['is_multi_user'] == 0:
                                 continue
 
                             temp_relay_rules[id] = self.relay_rule_list[id]
@@ -750,7 +752,7 @@ class DbTransfer(object):
                 if port in ServerPool.get_instance().tcp_servers_pool:
                     relay = ServerPool.get_instance().tcp_servers_pool[port]
                     for name in merge_config_keys:
-                        if name in cfg and not self.cmp(
+                        if name in cfg and not cmp(
                                 cfg[name], relay._config[name]):
                             cfgchange = True
                             break
@@ -758,7 +760,7 @@ class DbTransfer(object):
                     relay = ServerPool.get_instance().tcp_ipv6_servers_pool[
                         port]
                     for name in merge_config_keys:
-                        if name in cfg and not self.cmp(
+                        if name in cfg and not cmp(
                                 cfg[name], relay._config[name]):
                             cfgchange = True
                             break
@@ -768,7 +770,7 @@ class DbTransfer(object):
                     new_servers[port] = (passwd, cfg)
             elif ServerPool.get_instance().server_run_status(port) is False:
                 # new_servers[port] = passwd
-                self.new_server(port, passwd, cfg)
+                new_server(port, passwd, cfg)
 
         for row in last_rows:
             if row['port'] in cur_servers:
@@ -782,7 +784,7 @@ class DbTransfer(object):
                             eventloop.TIMEOUT_PRECISION / 2)
             for port in new_servers.keys():
                 passwd, cfg = new_servers[port]
-                self.new_server(port, passwd, cfg)
+                new_server(port, passwd, cfg)
 
         ServerPool.get_instance().push_uid_port_table(self.uid_port_table)
 
@@ -807,32 +809,17 @@ class DbTransfer(object):
                 ServerPool.get_instance().udp_ipv6_servers_pool[
                     mu_user_port].reset_single_multi_user_traffic(self.port_uid_table[port])
 
-    def new_server(self, port, passwd, cfg):
-        protocol = cfg.get(
-            'protocol',
-            ServerPool.get_instance().config.get(
-                'protocol',
-                'origin'))
-        method = cfg.get(
-            'method', ServerPool.get_instance().config.get('method', 'None'))
-        obfs = cfg.get(
-            'obfs', ServerPool.get_instance().config.get('obfs', 'plain'))
-        logging.info(
-            'db start server at port [%s] pass [%s] protocol [%s] method [%s] obfs [%s]' %
-            (port, passwd, protocol, method, obfs))
-        ServerPool.get_instance().new_server(port, cfg)
-
     @staticmethod
     def del_servers():
         global db_instance
         for port in [
-                v for v in ServerPool.get_instance().tcp_servers_pool.keys()]:
+            v for v in ServerPool.get_instance().tcp_servers_pool.keys()]:
             if ServerPool.get_instance().server_is_run(port) > 0:
                 ServerPool.get_instance().cb_del_server(port)
                 if port in db_instance.last_update_transfer:
                     del db_instance.last_update_transfer[port]
         for port in [
-                v for v in ServerPool.get_instance().tcp_ipv6_servers_pool.keys()]:
+            v for v in ServerPool.get_instance().tcp_ipv6_servers_pool.keys()]:
             if ServerPool.get_instance().server_is_run(port) > 0:
                 ServerPool.get_instance().cb_del_server(port)
                 if port in db_instance.last_update_transfer:
@@ -841,7 +828,6 @@ class DbTransfer(object):
     @staticmethod
     def thread_db(obj):
         import socket
-        import time
         global db_instance
         timeout = 60
         socket.setdefaulttimeout(timeout)
@@ -857,26 +843,6 @@ class DbTransfer(object):
                     resource.RLIMIT_NOFILE))
         except:
             pass
-        try:
-            while True:
-                load_config()
-                try:
-                    db_instance.push_db_all_user()
-                    rows = db_instance.pull_db_all_user()
-                    db_instance.del_server_out_of_bound_safe(last_rows, rows)
-                    db_instance.detect_text_ischanged = False
-                    db_instance.detect_hex_ischanged = False
-                    last_rows = rows
-                except Exception as e:
-                    trace = traceback.format_exc()
-                    logging.error(trace)
-                    # logging.warn('db thread except:%s' % e)
-                if db_instance.event.wait(60) or not db_instance.is_all_thread_alive():
-                    break
-                if db_instance.has_stopped:
-                    break
-        except KeyboardInterrupt as e:
-            pass
         db_instance.del_servers()
         ServerPool.get_instance().stop()
         db_instance = None
@@ -886,8 +852,3 @@ class DbTransfer(object):
         global db_instance
         db_instance.has_stopped = True
         db_instance.event.set()
-
-    def is_all_thread_alive(self):
-        if not ServerPool.get_instance().thread.is_alive():
-            return False
-        return True
