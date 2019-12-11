@@ -14,6 +14,7 @@ import importloader
 import platform
 import datetime
 import fcntl
+from auto_block import hosts_deny_file_path
 
 
 switchrule = None
@@ -231,7 +232,7 @@ class DbTransfer(object):
 
                         logging.info("Local Block ip:" + str(realip))
                 if get_config().CLOUDSAFE == 0:
-                    deny_file = open('/etc/hosts.deny', 'a')
+                    deny_file = open(hosts_deny_file_path(), 'a')
                     fcntl.flock(deny_file.fileno(), fcntl.LOCK_EX)
                     deny_file.write(deny_str)
                     deny_file.close()

@@ -11,13 +11,18 @@ import fcntl
 import configloader
 from shadowsocks import common
 
+def hosts_deny_file_path():
+    path = os.environ['HOME'] + "/hosts.deny"
+    if os.path.exists(path) == False :
+        os.mknod(path)
+    return path
 
 class AutoBlock(object):
     def __init__(self):
         import threading
 
         self.event = threading.Event()
-        self.start_line = self.file_len("/etc/hosts.deny")
+        self.start_line = self.file_len(hosts_deny_file_path())
         self.has_stopped = False
 
     def get_ip(self, text):
@@ -83,7 +88,7 @@ class AutoBlock(object):
                 node_ip_list.append(temp_list[0])
             cur.close()
 
-        deny_file = open("/etc/hosts.deny")
+        deny_file = open(hosts_deny_file_path())
         fcntl.flock(deny_file.fileno(), fcntl.LOCK_EX)
         deny_lines = deny_file.readlines()
         deny_file.close()
@@ -105,7 +110,7 @@ class AutoBlock(object):
                             del deny_lines[i]
                         i = i + 1
 
-                    deny_file = open("/etc/hosts.deny", "w+")
+                    deny_file = open(hosts_deny_file_path(), "w+")
                     fcntl.flock(deny_file.fileno(), fcntl.LOCK_EX)
                     for line in deny_lines:
                         deny_file.write(line)
@@ -123,7 +128,7 @@ class AutoBlock(object):
                                 del deny_lines[i]
                             i = i + 1
 
-                        deny_file = open("/etc/hosts.deny", "w+")
+                        deny_file = open(hosts_deny_file_path(), "w+")
                         fcntl.flock(deny_file.fileno(), fcntl.LOCK_EX)
                         for line in deny_lines:
                             deny_file.write(line)
@@ -233,7 +238,7 @@ class AutoBlock(object):
                             )
                     logging.info("Remote Block ip:" + str(ip))
 
-        deny_file = open("/etc/hosts.deny", "a")
+        deny_file = open(hosts_deny_file_path(), "a")
         fcntl.flock(deny_file.fileno(), fcntl.LOCK_EX)
         deny_file.write(deny_str)
         deny_file.close()
@@ -242,7 +247,7 @@ class AutoBlock(object):
                 configloader.get_config().ANTISSATTACK == 1
                 and configloader.get_config().CLOUDSAFE == 1
         ):
-            deny_file = open("/etc/hosts.deny", "a")
+            deny_file = open(hosts_deny_file_path(), "a")
             fcntl.flock(deny_file.fileno(), fcntl.LOCK_EX)
             deny_file.write(deny_str_at)
             deny_file.close()
@@ -258,7 +263,7 @@ class AutoBlock(object):
             cur.close()
             conn.close()
 
-        deny_file = open("/etc/hosts.deny")
+        deny_file = open(hosts_deny_file_path())
         fcntl.flock(deny_file.fileno(), fcntl.LOCK_EX)
         deny_lines = deny_file.readlines()
         deny_file.close()
@@ -285,13 +290,13 @@ class AutoBlock(object):
                     logging.info("Unblock ip:" + str(ip))
             i = i + 1
 
-        deny_file = open("/etc/hosts.deny", "w+")
+        deny_file = open(hosts_deny_file_path(), "w+")
         fcntl.flock(deny_file.fileno(), fcntl.LOCK_EX)
         for line in deny_lines:
             deny_file.write(line)
         deny_file.close()
 
-        self.start_line = self.file_len("/etc/hosts.deny")
+        self.start_line = self.file_len(hosts_deny_file_path())
 
     @staticmethod
     def thread_db(obj):
