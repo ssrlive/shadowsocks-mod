@@ -112,34 +112,35 @@ class Speedtest(object):
         else:
             import cymysql
 
-            if configloader.get_config().MYSQL_SSL_ENABLE == 1:
+            config = configloader.get_config()
+            if config.MYSQL_SSL_ENABLE == 1:
                 conn = cymysql.connect(
-                    host=configloader.get_config().MYSQL_HOST,
-                    port=configloader.get_config().MYSQL_PORT,
-                    user=configloader.get_config().MYSQL_USER,
-                    passwd=configloader.get_config().MYSQL_PASS,
-                    db=configloader.get_config().MYSQL_DB,
+                    host=config.MYSQL_HOST,
+                    port=config.MYSQL_PORT,
+                    user=config.MYSQL_USER,
+                    passwd=config.MYSQL_PASS,
+                    db=config.MYSQL_DB,
                     charset="utf8",
                     ssl={
-                        "ca": configloader.get_config().MYSQL_SSL_CA,
-                        "cert": configloader.get_config().MYSQL_SSL_CERT,
-                        "key": configloader.get_config().MYSQL_SSL_KEY,
+                        "ca": config.MYSQL_SSL_CA,
+                        "cert": config.MYSQL_SSL_CERT,
+                        "key": config.MYSQL_SSL_KEY,
                     },
                 )
             else:
                 conn = cymysql.connect(
-                    host=configloader.get_config().MYSQL_HOST,
-                    port=configloader.get_config().MYSQL_PORT,
-                    user=configloader.get_config().MYSQL_USER,
-                    passwd=configloader.get_config().MYSQL_PASS,
-                    db=configloader.get_config().MYSQL_DB,
+                    host=config.MYSQL_HOST,
+                    port=config.MYSQL_PORT,
+                    user=config.MYSQL_USER,
+                    passwd=config.MYSQL_PASS,
+                    db=config.MYSQL_DB,
                     charset="utf8",
                 )
             conn.autocommit(True)
             cur = conn.cursor()
             cur.execute(
                 "INSERT INTO `speedtest` (`id`, `nodeid`, `datetime`, `telecomping`, `telecomeupload`, `telecomedownload`, `unicomping`, `unicomupload`, `unicomdownload`, `cmccping`, `cmccupload`, `cmccdownload`) VALUES (NULL, '"
-                + str(configloader.get_config().NODE_ID)
+                + str(config.NODE_ID)
                 + "', unix_timestamp(), '"
                 + CTPing
                 + "', '"
