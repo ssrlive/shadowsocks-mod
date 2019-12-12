@@ -10,7 +10,6 @@ import fcntl
 
 import configloader
 from shadowsocks import common
-from db_transfer import MySqlWrapper
 
 webapi = None
 db_instance = None
@@ -41,6 +40,7 @@ class AutoBlock(object):
         return sum(1 for line in open(fname))
 
     def auto_block_thread(self):
+        from db_transfer import MySqlWrapper
         global webapi
         server_ip = socket.gethostbyname(configloader.get_config().MYSQL_HOST)
 

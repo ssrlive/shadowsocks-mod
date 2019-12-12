@@ -15,6 +15,7 @@ import platform
 import datetime
 import fcntl
 from auto_block import hosts_deny_file_path
+import cymysql
 
 
 switchrule = None
@@ -893,13 +894,14 @@ class DbTransfer(object):
             return False
         return True
 
+config = None
+
 class MySqlWrapper(object):
-    import cymysql
-    conn = None
     def __init__(self):
-        self.config = get_config()
+        global config
+        config = get_config()
         if config.MYSQL_SSL_ENABLE == 1:
-            conn = cymysql.connect(
+            self.conn = cymysql.connect(
                 host=config.MYSQL_HOST,
                 port=config.MYSQL_PORT,
                 user=config.MYSQL_USER,
@@ -913,7 +915,7 @@ class MySqlWrapper(object):
                 },
             )
         else:
-            conn = cymysql.connect(
+            self.conn = cymysql.connect(
                 host=config.MYSQL_HOST,
                 port=config.MYSQL_PORT,
                 user=config.MYSQL_USER,
@@ -921,11 +923,11 @@ class MySqlWrapper(object):
                 db=config.MYSQL_DB,
                 charset="utf8",
             )
-        conn.autocommit(True)
+        self.conn.autocommit(True)
 
     def __del__(self):
-        conn.commit()
-        conn.close()
+        self.conn.commit()
+        self.conn.close()
 
     def write_running_command(self, cmd):
         cur = self.conn.cursor()
@@ -939,7 +941,7 @@ class MySqlWrapper(object):
         cur.close()
 
     def write_speed_test_info(self, CTPing, CTUpSpeed, CTDLSpeed, CUPing, CUUpSpeed, CUDLSpeed, CMPing, CMUpSpeed, CMDLSpeed):
-        cur = conn.cursor()
+        cur = self.conn.cursor()
         cur.execute(
             "INSERT INTO `speedtest` (`id`, `nodeid`, `datetime`, `telecomping`, `telecomeupload`, `telecomedownload`, `unicomping`, `unicomupload`, `unicomdownload`, `cmccping`, `cmccupload`, `cmccdownload`) VALUES (NULL, '"
             + str(config.NODE_ID)
@@ -969,7 +971,7 @@ class MySqlWrapper(object):
         # 读取节点IP
         # SELECT * FROM `ss_node`  where `node_ip` != ''
         node_ip_list = []
-        cur = conn.cursor()
+        cur = self.conn.cursor()
         cur.execute(
             "SELECT `node_ip` FROM `ss_node`  where `node_ip` != ''"
         )
@@ -980,7 +982,7 @@ class MySqlWrapper(object):
         return node_ip_list
  
     def is_ip_in_blockip(self, ip):
-        cur = conn.cursor()
+        cur = self.conn.cursor()
         cur.execute(
             "SELECT * FROM `blockip` where `ip` = '"
             + str(ip)
@@ -994,7 +996,7 @@ class MySqlWrapper(object):
         return False
 
     def write_ip_to_blockip(self, ip):
-        cur = conn.cursor()
+        cur = self.conn.cursor()
         cur.execute(
             "INSERT INTO `blockip` (`id`, `nodeid`, `ip`, `datetime`) VALUES (NULL, '"
             + str(config.NODE_ID)
@@ -1005,7 +1007,7 @@ class MySqlWrapper(object):
         cur.close()
 
     def get_all_blockip(self):
-        cur = conn.cursor()
+        cur = self.conn.cursor()
         cur.execute(
             "SELECT * FROM `blockip` where `datetime`>unix_timestamp()-60"
         )
@@ -1014,7 +1016,7 @@ class MySqlWrapper(object):
         return rows
 
     def get_all_unblockip(self):
-        cur = conn.cursor()
+        cur = self.conn.cursor()
         cur.execute(
             "SELECT * FROM `unblockip` where `datetime`>unix_timestamp()-60"
         )
@@ -1022,7 +1024,7 @@ class MySqlWrapper(object):
         cur.close()
 
     def get_all_auto(self):
-        cur = conn.cursor()
+        cur = self.conn.cursor()
         cur.execute(
             "SELECT * FROM `auto` where `datetime`>unix_timestamp()-60 AND `type`=1"
         )
@@ -1031,7 +1033,7 @@ class MySqlWrapper(object):
         return rows
 
     def is_auto_sign_id(self, id):
-        cur = conn.cursor()
+        cur = self.conn.cursor()
         cur.execute(
             "SELECT * FROM `auto`  where `sign`='"
             + str(config.NODE_ID)
@@ -1044,7 +1046,7 @@ class MySqlWrapper(object):
         return (rows is not None)
 
     def write_auto_sign_info(self, id):
-        cur = conn.cursor()
+        cur = self.conn.cursor()
         cur.execute(
             "INSERT INTO `auto` (`id`, `value`, `sign`, `datetime`,`type`) VALUES (NULL, 'NodeID:"
             + str(config.NODE_ID)
