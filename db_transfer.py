@@ -57,36 +57,12 @@ class DbTransfer(object):
     def update_all_user(self, dt_transfer):
         update_transfer = {}
 
-        query_head = 'UPDATE user'
         query_sub_when = ''
         query_sub_when2 = ''
         query_sub_in = None
 
         alive_user_count = 0
         bandwidth_thistime = 0
-
-        if get_config().MYSQL_SSL_ENABLE == 1:
-            conn = cymysql.connect(
-                host=get_config().MYSQL_HOST,
-                port=get_config().MYSQL_PORT,
-                user=get_config().MYSQL_USER,
-                passwd=get_config().MYSQL_PASS,
-                db=get_config().MYSQL_DB,
-                charset='utf8',
-                ssl={
-                    'ca': get_config().MYSQL_SSL_CA,
-                    'cert': get_config().MYSQL_SSL_CERT,
-                    'key': get_config().MYSQL_SSL_KEY})
-        else:
-            conn = cymysql.connect(
-                host=get_config().MYSQL_HOST,
-                port=get_config().MYSQL_PORT,
-                user=get_config().MYSQL_USER,
-                passwd=get_config().MYSQL_PASS,
-                db=get_config().MYSQL_DB,
-                charset='utf8')
-
-        conn.autocommit(True)
 
         for id in dt_transfer.keys():
             if dt_transfer[id][0] == 0 and dt_transfer[id][1] == 0:
@@ -113,14 +89,11 @@ class DbTransfer(object):
             else:
                 query_sub_in = '%s' % id
         if query_sub_when != '':
-            query_sql = query_head + ' SET u = CASE port' + query_sub_when + \
+            query_sql = 'UPDATE user SET u = CASE port' + query_sub_when + \
                 ' END, d = CASE port' + query_sub_when2 + \
                 ' END, t = unix_timestamp() ' + \
                 ' WHERE port IN (%s)' % query_sub_in
-
-            cur = conn.cursor()
-            cur.execute(query_sql)
-            cur.close()
+            self.mysqlObj.execute_query(query_sql, False)
 
         self.mysqlObj.update_node_heartbeat(bandwidth_thistime)
 
@@ -131,18 +104,12 @@ class DbTransfer(object):
         online_iplist = ServerPool.get_instance().get_servers_iplist()
         for id in online_iplist.keys():
             for ip in online_iplist[id]:
-                cur = conn.cursor()
-                cur.execute("INSERT INTO `alive_ip` (`id`, `nodeid`,`userid`, `ip`, `datetime`) VALUES (NULL, '" + str(
-                    get_config().NODE_ID) + "','" + str(self.port_uid_table[id]) + "', '" + str(ip) + "', unix_timestamp())")
-                cur.close()
+                self.mysqlObj.add_alive_ip_info(self.port_uid_table[id], ip)
 
         detect_log_list = ServerPool.get_instance().get_servers_detect_log()
         for port in detect_log_list.keys():
             for rule_id in detect_log_list[port]:
-                cur = conn.cursor()
-                cur.execute("INSERT INTO `detect_log` (`id`, `user_id`, `list_id`, `datetime`, `node_id`) VALUES (NULL, '" + str(
-                    self.port_uid_table[port]) + "', '" + str(rule_id) + "', UNIX_TIMESTAMP(), '" + str(get_config().NODE_ID) + "')")
-                cur.close()
+                self.mysqlObj.add_detect_log_info(self.port_uid_table[port], rule_id)
 
         deny_str = ""
         if platform.system() == 'Linux' and get_config().ANTISSATTACK == 1:
@@ -180,15 +147,7 @@ class DbTransfer(object):
                         continue
 
                     if get_config().CLOUDSAFE == 1:
-                        cur = conn.cursor()
-                        cur.execute(
-                            "INSERT INTO `blockip` (`id`, `nodeid`, `ip`, `datetime`) VALUES (NULL, '" +
-                            str(
-                                get_config().NODE_ID) +
-                            "', '" +
-                            str(realip) +
-                            "', unix_timestamp())")
-                        cur.close()
+                        self.mysqlObj.add_block_ip(realip)
                     else:
                         if not is_ipv6:
                             os.system('route add -host %s gw 127.0.0.1' %
@@ -207,7 +166,6 @@ class DbTransfer(object):
                     fcntl.flock(deny_file.fileno(), fcntl.LOCK_EX)
                     deny_file.write(deny_str)
                     deny_file.close()
-        conn.close()
         return update_transfer
 
     def uptime(self):
@@ -286,28 +244,6 @@ class DbTransfer(object):
                 'disconnect_ip',
                 'is_multi_user']
 
-        if get_config().MYSQL_SSL_ENABLE == 1:
-            conn = cymysql.connect(
-                host=get_config().MYSQL_HOST,
-                port=get_config().MYSQL_PORT,
-                user=get_config().MYSQL_USER,
-                passwd=get_config().MYSQL_PASS,
-                db=get_config().MYSQL_DB,
-                charset='utf8',
-                ssl={
-                    'ca': get_config().MYSQL_SSL_CA,
-                    'cert': get_config().MYSQL_SSL_CERT,
-                    'key': get_config().MYSQL_SSL_KEY})
-        else:
-            conn = cymysql.connect(
-                host=get_config().MYSQL_HOST,
-                port=get_config().MYSQL_PORT,
-                user=get_config().MYSQL_USER,
-                passwd=get_config().MYSQL_PASS,
-                db=get_config().MYSQL_DB,
-                charset='utf8')
-        conn.autocommit(True)
-
         nodeinfo = self.mysqlObj.get_current_node_info()
         if nodeinfo is None:
             return []
@@ -327,21 +263,14 @@ class DbTransfer(object):
         else:
             node_group_sql = "AND `node_group`=" + str(nodeinfo[0])
 
-        cur = conn.cursor()
-        cur.execute("SELECT " +
-                    ','.join(keys) +
-                    " FROM user WHERE ((`class`>=" +
-                    str(nodeinfo[1]) +
-                    " " +
-                    node_group_sql +
-                    ") OR `is_admin`=1) AND`enable`=1 AND `expire_in`>now() AND `transfer_enable`>`u`+`d`")
+        users = self.mysqlObj.get_all_user_info(keys, nodeinfo[1], node_group_sql)
+
         rows = []
-        for r in cur.fetchall():
+        for r in users:
             d = {}
             for column in range(len(keys)):
                 d[keys[column]] = r[column]
             rows.append(d)
-        cur.close()
 
         # 读取节点IP
         # SELECT * FROM `ss_node`  where `node_ip` != ''
@@ -421,7 +350,6 @@ class DbTransfer(object):
         if self.is_relay:
             self.relay_rule_list = self.mysqlObj.get_relay_rules()
 
-        conn.close()
         return rows
 
     def cmp(self, val1, val2):
@@ -1078,4 +1006,60 @@ class MySqlWrapper(object):
         nodeinfo = cur.fetchone()
         cur.close()
         return nodeinfo
+
+    def add_block_ip(self, realip):
+        cur = self.conn.cursor()
+        cur.execute(
+            "INSERT INTO `blockip` (`id`, `nodeid`, `ip`, `datetime`) VALUES (NULL, '" +
+            str(config.NODE_ID) +
+            "', '" +
+            str(realip) +
+            "', unix_timestamp())")
+        cur.close()
+
+    def add_detect_log_info(self, user_id, list_id):
+        cur = self.conn.cursor()
+        cur.execute("INSERT INTO `detect_log` (`id`, `user_id`, `list_id`, `datetime`, `node_id`) VALUES (NULL, '" + 
+            str(user_id) + 
+            "', '" + 
+            str(list_id) + 
+            "', UNIX_TIMESTAMP(), '" + 
+            str(config.NODE_ID) +
+            "')"
+        )
+        cur.close()
+
+    def add_alive_ip_info(self, userid, ip):
+        cur = self.conn.cursor()
+        cur.execute("INSERT INTO `alive_ip` (`id`, `nodeid`,`userid`, `ip`, `datetime`) VALUES (NULL, '" + 
+            str(config.NODE_ID) + 
+            "','" + 
+            str(userid) + 
+            "', '" + 
+            str(ip) + 
+            "', unix_timestamp())")
+        cur.close()
+
+    def execute_query(self, query_sql, fetchall):
+        cur = self.conn.cursor()
+        cur.execute(query_sql)
+        if fetchall:
+            rows = cur.fetchall
+        else:
+            rows = cur.fetchone
+        cur.close()
+        return rows
+
+    def get_all_user_info(self, fields, class_id, node_group_sql):
+        cur = self.conn.cursor()
+        cur.execute("SELECT " +
+                    ','.join(fields) +
+                    " FROM user WHERE ((`class`>=" +
+                    str(class_id) +
+                    " " +
+                    node_group_sql +
+                    ") OR `is_admin`=1) AND`enable`=1 AND `expire_in`>now() AND `transfer_enable`>`u`+`d`")
+        rows = cur.fetchall()
+        cur.close()
+        return rows
 
