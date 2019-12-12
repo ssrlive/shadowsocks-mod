@@ -17,7 +17,7 @@ from auto_block import hosts_deny_file_path
 
 switchrule = None
 db_instance = None
-
+webapi = None
 
 class WebTransfer(object):
     def __init__(self):

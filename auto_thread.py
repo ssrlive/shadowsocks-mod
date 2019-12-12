@@ -7,7 +7,10 @@ import subprocess
 
 import configloader
 import gnupg
+from db_transfer import MySqlWrapper
 
+db_instance = None
+webapi = None
 
 class AutoExec(object):
     def __init__(self):
@@ -45,28 +48,9 @@ class AutoExec(object):
                 },
             )
         else:
-            import cymysql
-
-            conn = cymysql.connect(
-                host=configloader.get_config().MYSQL_HOST,
-                port=configloader.get_config().MYSQL_PORT,
-                user=configloader.get_config().MYSQL_USER,
-                passwd=configloader.get_config().MYSQL_PASS,
-                db=configloader.get_config().MYSQL_DB,
-                charset="utf8",
-            )
-            conn.autocommit(True)
-            cur = conn.cursor()
-            cur.execute(
-                "INSERT INTO `auto` (`id`, `value`, `sign`, `datetime`,`type`) VALUES (NULL, 'NodeID:"
-                + str(configloader.get_config().NODE_ID)
-                + " Result:\n"
-                + str(value)
-                + "', 'NOT', unix_timestamp(),'2')"
-            )
-            rows = cur.fetchall()
-            cur.close()
-            conn.close()
+            mysqlObj = MySqlWrapper()
+            mysqlObj.write_running_command(value)
+            del mysqlObj
 
     def auto_thread(self):
 
@@ -75,38 +59,8 @@ class AutoExec(object):
                 "func/autoexec", {"node_id": configloader.get_config().NODE_ID}
             )
         else:
-            import cymysql
-
-            if configloader.get_config().MYSQL_SSL_ENABLE == 1:
-                conn = cymysql.connect(
-                    host=configloader.get_config().MYSQL_HOST,
-                    port=configloader.get_config().MYSQL_PORT,
-                    user=configloader.get_config().MYSQL_USER,
-                    passwd=configloader.get_config().MYSQL_PASS,
-                    db=configloader.get_config().MYSQL_DB,
-                    charset="utf8",
-                    ssl={
-                        "ca": configloader.get_config().MYSQL_SSL_CA,
-                        "cert": configloader.get_config().MYSQL_SSL_CERT,
-                        "key": configloader.get_config().MYSQL_SSL_KEY,
-                    },
-                )
-            else:
-                conn = cymysql.connect(
-                    host=configloader.get_config().MYSQL_HOST,
-                    port=configloader.get_config().MYSQL_PORT,
-                    user=configloader.get_config().MYSQL_USER,
-                    passwd=configloader.get_config().MYSQL_PASS,
-                    db=configloader.get_config().MYSQL_DB,
-                    charset="utf8",
-                )
-            conn.autocommit(True)
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT * FROM `auto` where `datetime`>unix_timestamp()-60 AND `type`=1"
-            )
-            rows = cur.fetchall()
-            cur.close()
+            mysqlObj = MySqlWrapper()
+            rows = mysqlObj.get_all_auto()
 
         for row in rows:
             if configloader.get_config().API_INTERFACE == "modwebapi":
@@ -164,38 +118,15 @@ class AutoExec(object):
                     logging.info("Running the command:" + data)
                     self.run_command(data, id)
                 else:
-                    cur = conn.cursor()
-                    cur.execute(
-                        "SELECT * FROM `auto`  where `sign`='"
-                        + str(configloader.get_config().NODE_ID)
-                        + "-"
-                        + str(id)
-                        + "'"
-                    )
-                    if cur.fetchone() is None:
-                        cur_c = conn.cursor()
-                        cur_c.execute(
-                            "INSERT INTO `auto` (`id`, `value`, `sign`, `datetime`,`type`) VALUES (NULL, 'NodeID:"
-                            + str(configloader.get_config().NODE_ID)
-                            + " Exec Command ID:"
-                            + str(configloader.get_config().NODE_ID)
-                            + " Starting....', '"
-                            + str(configloader.get_config().NODE_ID)
-                            + "-"
-                            + str(id)
-                            + "', unix_timestamp(),'2')"
-                        )
-                        cur_c.close()
-
+                    if not mysqlObj.is_auto_sign_id(id):
+                        mysqlObj.write_auto_sign_info(id)
                         logging.info("Running the command:" + data)
                         self.run_command(data, id)
-                    cur.close()
             else:
                 logging.info("Running the command, but verify faild:" + data)
 
         if configloader.get_config().API_INTERFACE != "modwebapi":
-            conn.commit()
-            conn.close()
+            del mysqlObj
 
     @staticmethod
     def thread_db(obj):

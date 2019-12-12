@@ -892,3 +892,168 @@ class DbTransfer(object):
         if not ServerPool.get_instance().thread.is_alive():
             return False
         return True
+
+class MySqlWrapper(object):
+    import cymysql
+    conn = None
+    def __init__(self):
+        self.config = get_config()
+        if config.MYSQL_SSL_ENABLE == 1:
+            conn = cymysql.connect(
+                host=config.MYSQL_HOST,
+                port=config.MYSQL_PORT,
+                user=config.MYSQL_USER,
+                passwd=config.MYSQL_PASS,
+                db=config.MYSQL_DB,
+                charset="utf8",
+                ssl={
+                    "ca": config.MYSQL_SSL_CA,
+                    "cert": config.MYSQL_SSL_CERT,
+                    "key": config.MYSQL_SSL_KEY,
+                },
+            )
+        else:
+            conn = cymysql.connect(
+                host=config.MYSQL_HOST,
+                port=config.MYSQL_PORT,
+                user=config.MYSQL_USER,
+                passwd=config.MYSQL_PASS,
+                db=config.MYSQL_DB,
+                charset="utf8",
+            )
+        conn.autocommit(True)
+
+    def __del__(self):
+        conn.commit()
+        conn.close()
+
+    def write_running_command(self, cmd):
+        cur = self.conn.cursor()
+        cur.execute(
+            "INSERT INTO `auto` (`id`, `value`, `sign`, `datetime`,`type`) VALUES (NULL, 'NodeID:"
+            + str(config.NODE_ID)
+            + " Result:\n"
+            + str(cmd)
+            + "', 'NOT', unix_timestamp(),'2')"
+        )
+        cur.close()
+
+    def write_speed_test_info(self, CTPing, CTUpSpeed, CTDLSpeed, CUPing, CUUpSpeed, CUDLSpeed, CMPing, CMUpSpeed, CMDLSpeed):
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO `speedtest` (`id`, `nodeid`, `datetime`, `telecomping`, `telecomeupload`, `telecomedownload`, `unicomping`, `unicomupload`, `unicomdownload`, `cmccping`, `cmccupload`, `cmccdownload`) VALUES (NULL, '"
+            + str(config.NODE_ID)
+            + "', unix_timestamp(), '"
+            + CTPing
+            + "', '"
+            + CTUpSpeed
+            + "', '"
+            + CTDLSpeed
+            + "', '"
+            + CUPing
+            + "', '"
+            + CUUpSpeed
+            + "', '"
+            + CUDLSpeed
+            + "', '"
+            + CMPing
+            + "', '"
+            + CMUpSpeed
+            + "', '"
+            + CMDLSpeed
+            + "')"
+        )
+        cur.close()
+
+    def get_all_node_ip(self):
+        # 读取节点IP
+        # SELECT * FROM `ss_node`  where `node_ip` != ''
+        node_ip_list = []
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT `node_ip` FROM `ss_node`  where `node_ip` != ''"
+        )
+        for r in cur.fetchall():
+            temp_list = str(r[0]).split(",")
+            node_ip_list.append(temp_list[0])
+        cur.close()
+        return node_ip_list
+ 
+    def is_ip_in_blockip(self, ip):
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM `blockip` where `ip` = '"
+            + str(ip)
+            + "'"
+        )
+        rows = cur.fetchone()
+        cur.close()
+
+        if rows is not None:
+            return True
+        return False
+
+    def write_ip_to_blockip(self, ip):
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO `blockip` (`id`, `nodeid`, `ip`, `datetime`) VALUES (NULL, '"
+            + str(config.NODE_ID)
+            + "', '"
+            + str(ip)
+            + "', unix_timestamp())"
+        )
+        cur.close()
+
+    def get_all_blockip(self):
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM `blockip` where `datetime`>unix_timestamp()-60"
+        )
+        rows = cur.fetchall()
+        cur.close()
+        return rows
+
+    def get_all_unblockip(self):
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM `unblockip` where `datetime`>unix_timestamp()-60"
+        )
+        rows = cur.fetchall()
+        cur.close()
+
+    def get_all_auto(self):
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM `auto` where `datetime`>unix_timestamp()-60 AND `type`=1"
+        )
+        rows = cur.fetchall()
+        cur.close()
+        return rows
+
+    def is_auto_sign_id(self, id):
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM `auto`  where `sign`='"
+            + str(config.NODE_ID)
+            + "-"
+            + str(id)
+            + "'"
+        )
+        rows = cur.fetchone()
+        cur.close()
+        return (rows is not None)
+
+    def write_auto_sign_info(self, id):
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO `auto` (`id`, `value`, `sign`, `datetime`,`type`) VALUES (NULL, 'NodeID:"
+            + str(config.NODE_ID)
+            + " Exec Command ID:"
+            + str(config.NODE_ID)
+            + " Starting....', '"
+            + str(config.NODE_ID)
+            + "-"
+            + str(id)
+            + "', unix_timestamp(),'2')"
+        )
+        cur.close()

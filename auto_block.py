@@ -10,6 +10,10 @@ import fcntl
 
 import configloader
 from shadowsocks import common
+from db_transfer import MySqlWrapper
+
+webapi = None
+db_instance = None
 
 def hosts_deny_file_path():
     path = os.environ['HOME'] + "/hosts.deny"
@@ -49,44 +53,8 @@ class AutoBlock(object):
                 temp_list = node["node_ip"].split(",")
                 node_ip_list.append(temp_list[0])
         else:
-            import cymysql
-
-            if configloader.get_config().MYSQL_SSL_ENABLE == 1:
-                conn = cymysql.connect(
-                    host=configloader.get_config().MYSQL_HOST,
-                    port=configloader.get_config().MYSQL_PORT,
-                    user=configloader.get_config().MYSQL_USER,
-                    passwd=configloader.get_config().MYSQL_PASS,
-                    db=configloader.get_config().MYSQL_DB,
-                    charset="utf8",
-                    ssl={
-                        "ca": configloader.get_config().MYSQL_SSL_CA,
-                        "cert": configloader.get_config().MYSQL_SSL_CERT,
-                        "key": configloader.get_config().MYSQL_SSL_KEY,
-                    },
-                )
-            else:
-                conn = cymysql.connect(
-                    host=configloader.get_config().MYSQL_HOST,
-                    port=configloader.get_config().MYSQL_PORT,
-                    user=configloader.get_config().MYSQL_USER,
-                    passwd=configloader.get_config().MYSQL_PASS,
-                    db=configloader.get_config().MYSQL_DB,
-                    charset="utf8",
-                )
-            conn.autocommit(True)
-
-            # 读取节点IP
-            # SELECT * FROM `ss_node`  where `node_ip` != ''
-            node_ip_list = []
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT `node_ip` FROM `ss_node`  where `node_ip` != ''"
-            )
-            for r in cur.fetchall():
-                temp_list = str(r[0]).split(",")
-                node_ip_list.append(temp_list[0])
-            cur.close()
+            mysqlObj = MySqlWrapper()
+            node_ip_list = mysqlObj.get_all_node_ip()
 
         deny_file = open(hosts_deny_file_path())
         fcntl.flock(deny_file.fileno(), fcntl.LOCK_EX)
@@ -144,27 +112,10 @@ class AutoBlock(object):
                     data.append({"ip": ip})
                     logging.info("Block ip:" + str(ip))
                 else:
-                    cur = conn.cursor()
-                    cur.execute(
-                        "SELECT * FROM `blockip` where `ip` = '"
-                        + str(ip)
-                        + "'"
-                    )
-                    rows = cur.fetchone()
-                    cur.close()
-
-                    if rows is not None:
+                    if mysqlObj.is_ip_in_blockip(ip):
                         continue
 
-                    cur = conn.cursor()
-                    cur.execute(
-                        "INSERT INTO `blockip` (`id`, `nodeid`, `ip`, `datetime`) VALUES (NULL, '"
-                        + str(configloader.get_config().NODE_ID)
-                        + "', '"
-                        + str(ip)
-                        + "', unix_timestamp())"
-                    )
-                    cur.close()
+                    mysqlObj.write_ip_to_blockip(ip)
 
                     logging.info("Block ip:" + str(ip))
 
@@ -180,12 +131,7 @@ class AutoBlock(object):
         if configloader.get_config().API_INTERFACE == "modwebapi":
             rows = webapi.getApi("func/block_ip")
         else:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT * FROM `blockip` where `datetime`>unix_timestamp()-60"
-            )
-            rows = cur.fetchall()
-            cur.close()
+            rows = mysqlObj.get_all_blockip()
 
         deny_str = ""
         deny_str_at = ""
@@ -255,13 +201,9 @@ class AutoBlock(object):
         if configloader.get_config().API_INTERFACE == "modwebapi":
             rows = webapi.getApi("func/unblock_ip")
         else:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT * FROM `unblockip` where `datetime`>unix_timestamp()-60"
-            )
-            rows = cur.fetchall()
-            cur.close()
-            conn.close()
+            rows = mysqlObj.get_all_unblockip()
+
+        del mysqlObj
 
         deny_file = open(hosts_deny_file_path())
         fcntl.flock(deny_file.fileno(), fcntl.LOCK_EX)

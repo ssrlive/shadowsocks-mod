@@ -6,7 +6,10 @@ import logging
 import speedtest
 
 import configloader
+from db_transfer import MySqlWrapper
 
+db_instance = None
+webapi = None
 
 class Speedtest(object):
     def __init__(self):
@@ -110,59 +113,9 @@ class Speedtest(object):
                 },
             )
         else:
-            import cymysql
-
-            config = configloader.get_config()
-            if config.MYSQL_SSL_ENABLE == 1:
-                conn = cymysql.connect(
-                    host=config.MYSQL_HOST,
-                    port=config.MYSQL_PORT,
-                    user=config.MYSQL_USER,
-                    passwd=config.MYSQL_PASS,
-                    db=config.MYSQL_DB,
-                    charset="utf8",
-                    ssl={
-                        "ca": config.MYSQL_SSL_CA,
-                        "cert": config.MYSQL_SSL_CERT,
-                        "key": config.MYSQL_SSL_KEY,
-                    },
-                )
-            else:
-                conn = cymysql.connect(
-                    host=config.MYSQL_HOST,
-                    port=config.MYSQL_PORT,
-                    user=config.MYSQL_USER,
-                    passwd=config.MYSQL_PASS,
-                    db=config.MYSQL_DB,
-                    charset="utf8",
-                )
-            conn.autocommit(True)
-            cur = conn.cursor()
-            cur.execute(
-                "INSERT INTO `speedtest` (`id`, `nodeid`, `datetime`, `telecomping`, `telecomeupload`, `telecomedownload`, `unicomping`, `unicomupload`, `unicomdownload`, `cmccping`, `cmccupload`, `cmccdownload`) VALUES (NULL, '"
-                + str(config.NODE_ID)
-                + "', unix_timestamp(), '"
-                + CTPing
-                + "', '"
-                + CTUpSpeed
-                + "', '"
-                + CTDLSpeed
-                + "', '"
-                + CUPing
-                + "', '"
-                + CUUpSpeed
-                + "', '"
-                + CUDLSpeed
-                + "', '"
-                + CMPing
-                + "', '"
-                + CMUpSpeed
-                + "', '"
-                + CMDLSpeed
-                + "')"
-            )
-            cur.close()
-            conn.close()
+            mySqlObj = MySqlWrapper()
+            mySqlObj.write_speed_test_info(CTPing, CTUpSpeed, CTDLSpeed, CUPing, CUUpSpeed, CUDLSpeed, CMPing, CMUpSpeed, CMDLSpeed)
+            del mySqlObj
 
         logging.info("Speedtest finished")
 
