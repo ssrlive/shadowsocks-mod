@@ -49,8 +49,12 @@ class DbTransfer(object):
 
         self.has_stopped = False
 
+        self.mysqlObj = MySqlWrapper()
+
+    def __del__(self):
+        del self.mysqlObj
+
     def update_all_user(self, dt_transfer):
-        import cymysql
         update_transfer = {}
 
         query_head = 'UPDATE user'
@@ -96,23 +100,10 @@ class DbTransfer(object):
 
             alive_user_count = alive_user_count + 1
 
-            cur = conn.cursor()
-            cur.execute("INSERT INTO `user_traffic_log` (`id`, `user_id`, `u`, `d`, `Node_ID`, `rate`, `traffic`, `log_time`) VALUES (NULL, '" +
-                        str(self.port_uid_table[id]) +
-                        "', '" +
-                        str(dt_transfer[id][0]) +
-                        "', '" +
-                        str(dt_transfer[id][1]) +
-                        "', '" +
-                        str(get_config().NODE_ID) +
-                        "', '" +
-                        str(self.traffic_rate) +
-                        "', '" +
-                        self.trafficShow((dt_transfer[id][0] +
-                                          dt_transfer[id][1]) *
-                                         self.traffic_rate) +
-                        "', unix_timestamp()); ")
-            cur.close()
+            traffic = self.trafficShow((dt_transfer[id][0] + dt_transfer[id][1]) * self.traffic_rate)
+
+            self.mysqlObj.add_user_traffic_log(self.port_uid_table[id], 
+                dt_transfer[id][0], dt_transfer[id][1], self.traffic_rate, traffic)
 
             bandwidth_thistime = bandwidth_thistime + \
                 (dt_transfer[id][0] + dt_transfer[id][1])
@@ -131,25 +122,11 @@ class DbTransfer(object):
             cur.execute(query_sql)
             cur.close()
 
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE `ss_node` SET `node_heartbeat`=unix_timestamp(),`node_bandwidth`=`node_bandwidth`+'" +
-            str(bandwidth_thistime) +
-            "' WHERE `id` = " +
-            str(
-                get_config().NODE_ID) +
-            " ; ")
-        cur.close()
+        self.mysqlObj.update_node_heartbeat(bandwidth_thistime)
 
-        cur = conn.cursor()
-        cur.execute("INSERT INTO `ss_node_online_log` (`id`, `node_id`, `online_user`, `log_time`) VALUES (NULL, '" +
-                    str(get_config().NODE_ID) + "', '" + str(alive_user_count) + "', unix_timestamp()); ")
-        cur.close()
+        self.mysqlObj.add_alive_user_count(alive_user_count)
 
-        cur = conn.cursor()
-        cur.execute("INSERT INTO `ss_node_info` (`id`, `node_id`, `uptime`, `load`, `log_time`) VALUES (NULL, '" +
-                    str(get_config().NODE_ID) + "', '" + str(self.uptime()) + "', '" + str(self.load()) + "', unix_timestamp()); ")
-        cur.close()
+        self.mysqlObj.add_node_networking_info(self.uptime(), self.load())
 
         online_iplist = ServerPool.get_instance().get_servers_iplist()
         for id in online_iplist.keys():
@@ -199,16 +176,9 @@ class DbTransfer(object):
                     if has_match_node:
                         continue
 
-                    cur = conn.cursor()
-                    cur.execute(
-                        "SELECT * FROM `blockip` where `ip` = '" +
-                        str(realip) +
-                        "'")
-                    rows = cur.fetchone()
-                    cur.close()
-
-                    if rows is not None:
+                    if self.mysqlObj.is_ip_in_blockip(realip):
                         continue
+
                     if get_config().CLOUDSAFE == 1:
                         cur = conn.cursor()
                         cur.execute(
@@ -246,8 +216,8 @@ class DbTransfer(object):
 
     def load(self):
         import os
-        return os.popen(
-            "cat /proc/loadavg | awk '{ print $1\" \"$2\" \"$3 }'").readlines()[0][:-2]
+        cmd = "cat /proc/loadavg | awk '{ print $1 \" \" $2 \" \" $3 }'"
+        return os.popen(cmd).readlines()[0][:-2]
 
     def trafficShow(self, Traffic):
         if Traffic < 1024:
@@ -292,7 +262,6 @@ class DbTransfer(object):
         self.update_all_user(dt_transfer)
 
     def pull_db_all_user(self):
-        import cymysql
         # 数据库所有用户信息
         try:
             switchrule = importloader.load('switchrule')
@@ -339,20 +308,9 @@ class DbTransfer(object):
                 charset='utf8')
         conn.autocommit(True)
 
-        cur = conn.cursor()
-
-        cur.execute("SELECT `node_group`,`node_class`,`node_speedlimit`,`traffic_rate`,`mu_only`,`sort` FROM ss_node where `id`='" +
-                    str(get_config().NODE_ID) + "' AND (`node_bandwidth`<`node_bandwidth_limit` OR `node_bandwidth_limit`=0)")
-        nodeinfo = cur.fetchone()
-
+        nodeinfo = self.mysqlObj.get_current_node_info()
         if nodeinfo is None:
-            rows = []
-            cur.close()
-            conn.commit()
-            conn.close()
-            return rows
-
-        cur.close()
+            return []
 
         self.node_speedlimit = float(nodeinfo[2])
         self.traffic_rate = float(nodeinfo[3])
@@ -388,23 +346,19 @@ class DbTransfer(object):
         # 读取节点IP
         # SELECT * FROM `ss_node`  where `node_ip` != ''
         self.node_ip_list = []
-        cur = conn.cursor()
-        cur.execute("SELECT `node_ip` FROM `ss_node`  where `node_ip` != ''")
-        for r in cur.fetchall():
+        node_ips = self.mysqlObj.get_node_ip_list()
+        for r in node_ips:
             temp_list = str(r[0]).split(',')
             self.node_ip_list.append(temp_list[0])
-        cur.close()
 
         # 读取审计规则,数据包匹配部分
         keys_detect = ['id', 'regex']
 
-        cur = conn.cursor()
-        cur.execute("SELECT " + ','.join(keys_detect) +
-                    " FROM detect_list where `type` = 1")
+        detect_list_1 = self.mysqlObj.get_detect_list_with_type_1(keys_detect)
 
         exist_id_list = []
 
-        for r in cur.fetchall():
+        for r in detect_list_1:
             id = int(r[0])
             exist_id_list.append(id)
             if id not in self.detect_text_list:
@@ -431,15 +385,11 @@ class DbTransfer(object):
         for id in deleted_id_list:
             del self.detect_text_list[id]
 
-        cur.close()
-
-        cur = conn.cursor()
-        cur.execute("SELECT " + ','.join(keys_detect) +
-                    " FROM detect_list where `type` = 2")
+        detect_list_2 = self.mysqlObj.get_detect_list_with_type_2(keys_detect)
 
         exist_id_list = []
 
-        for r in cur.fetchall():
+        for r in detect_list_2:
             id = int(r[0])
             exist_id_list.append(id)
             if r[0] not in self.detect_hex_list:
@@ -466,31 +416,10 @@ class DbTransfer(object):
         for id in deleted_id_list:
             del self.detect_hex_list[id]
 
-        cur.close()
-
         # 读取中转规则，如果是中转节点的话
 
         if self.is_relay:
-            self.relay_rule_list = {}
-
-            keys_detect = ['id', 'user_id', 'dist_ip', 'port', 'priority']
-
-            cur = conn.cursor()
-            cur.execute("SELECT " +
-                        ','.join(keys_detect) +
-                        " FROM relay where `source_node_id` = 0 or `source_node_id` = " +
-                        str(get_config().NODE_ID))
-
-            for r in cur.fetchall():
-                d = {}
-                d['id'] = int(r[0])
-                d['user_id'] = int(r[1])
-                d['dist_ip'] = str(r[2])
-                d['port'] = int(r[3])
-                d['priority'] = int(r[4])
-                self.relay_rule_list[d['id']] = d
-
-            cur.close()
+            self.relay_rule_list = self.mysqlObj.get_relay_rules()
 
         conn.close()
         return rows
@@ -990,10 +919,7 @@ class MySqlWrapper(object):
         )
         rows = cur.fetchone()
         cur.close()
-
-        if rows is not None:
-            return True
-        return False
+        return (rows is not None)
 
     def write_ip_to_blockip(self, ip):
         cur = self.conn.cursor()
@@ -1059,3 +985,97 @@ class MySqlWrapper(object):
             + "', unix_timestamp(),'2')"
         )
         cur.close()
+
+    def get_relay_rules(self):
+        relay_rule_list = {}
+
+        keys_detect = ['id', 'user_id', 'dist_ip', 'port', 'priority']
+
+        cur = self.conn.cursor()
+        cur.execute("SELECT " +
+            ','.join(keys_detect) +
+            " FROM relay where `source_node_id` = 0 or `source_node_id` = " +
+            str(config.NODE_ID))
+
+        for r in cur.fetchall():
+            d = {}
+            d['id'] = int(r[0])
+            d['user_id'] = int(r[1])
+            d['dist_ip'] = str(r[2])
+            d['port'] = int(r[3])
+            d['priority'] = int(r[4])
+            relay_rule_list[d['id']] = d
+
+        cur.close()
+        return relay_rule_list
+
+    def get_detect_list_with_type_2(self, keys_detect):
+        cur = self.conn.cursor()
+        cur.execute("SELECT " + ','.join(keys_detect) +
+                    " FROM detect_list where `type` = 2")
+        rows = cur.fetchall()
+        cur.close()
+        return rows
+
+    def get_detect_list_with_type_1(self, keys_detect):
+        cur = self.conn.cursor()
+        cur.execute("SELECT " + ','.join(keys_detect) +
+                    " FROM detect_list where `type` = 1")
+        rows = cur.fetchall()
+        cur.close()
+        return rows
+
+    def get_node_ip_list(self):
+        cur = self.conn.cursor()
+        cur.execute("SELECT `node_ip` FROM `ss_node`  where `node_ip` != ''")
+        rows = cur.fetchall()
+        cur.close()
+        return rows
+
+    def add_user_traffic_log(self, user_id, u, d, traffic_rate, traffic):
+        cur = self.conn.cursor()
+        cur.execute("INSERT INTO `user_traffic_log` (`id`, `user_id`, `u`, `d`, `Node_ID`, `rate`, `traffic`, `log_time`) VALUES (NULL, '" +
+            str(user_id) +
+            "', '" +
+            str(u) +
+            "', '" +
+            str(d) +
+            "', '" +
+            str(config.NODE_ID) +
+            "', '" +
+            str(traffic_rate) +
+            "', '" +
+            traffic +
+            "', unix_timestamp()); ")
+        cur.close()
+
+    def update_node_heartbeat(self, bandwidth):
+        cur = self.conn.cursor()
+        cur.execute(
+            "UPDATE `ss_node` SET `node_heartbeat`=unix_timestamp(),`node_bandwidth`=`node_bandwidth`+'" +
+            str(bandwidth) +
+            "' WHERE `id` = " +
+            str(config.NODE_ID) +
+            " ; ")
+        cur.close()
+
+    def add_alive_user_count(self, alive_user_count):
+        cur = self.conn.cursor()
+        cur.execute("INSERT INTO `ss_node_online_log` (`id`, `node_id`, `online_user`, `log_time`) VALUES (NULL, '" +
+                    str(config.NODE_ID) + "', '" + str(alive_user_count) + "', unix_timestamp()); ")
+        cur.close()
+
+    def add_node_networking_info(self, uptime, load_info):
+        cur = self.conn.cursor()
+        cur.execute("INSERT INTO `ss_node_info` (`id`, `node_id`, `uptime`, `load`, `log_time`) VALUES (NULL, '" +
+                    str(config.NODE_ID) + "', '" + str(uptime) + "', '" + str(load_info) + "', unix_timestamp()); ")
+        cur.close()        
+
+    def get_current_node_info(self):
+        cur = self.conn.cursor()
+        cur.execute("SELECT `node_group`,`node_class`,`node_speedlimit`,`traffic_rate`,`mu_only`,`sort` FROM ss_node where `id`='" +
+                    str(config.NODE_ID) + "' AND (`node_bandwidth`<`node_bandwidth_limit` OR `node_bandwidth_limit`=0)")
+        nodeinfo = cur.fetchone()
+        cur.close()
+        return nodeinfo
+
