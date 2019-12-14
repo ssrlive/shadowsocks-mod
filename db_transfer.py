@@ -49,10 +49,8 @@ class DbTransfer(object):
 
         self.has_stopped = False
 
-        self.mysqlObj = MySqlWrapper()
-
     def __del__(self):
-        del self.mysqlObj
+        pass
 
     def update_all_user(self, dt_transfer):
         update_transfer = {}
@@ -63,6 +61,8 @@ class DbTransfer(object):
 
         alive_user_count = 0
         bandwidth_thistime = 0
+
+        mysqlObj = MySqlWrapper()
 
         for id in dt_transfer.keys():
             if dt_transfer[id][0] == 0 and dt_transfer[id][1] == 0:
@@ -78,7 +78,7 @@ class DbTransfer(object):
 
             traffic = self.trafficShow((dt_transfer[id][0] + dt_transfer[id][1]) * self.traffic_rate)
 
-            self.mysqlObj.add_user_traffic_log(self.port_uid_table[id], 
+            mysqlObj.add_user_traffic_log(self.port_uid_table[id], 
                 dt_transfer[id][0], dt_transfer[id][1], self.traffic_rate, traffic)
 
             bandwidth_thistime = bandwidth_thistime + \
@@ -93,23 +93,23 @@ class DbTransfer(object):
                 ' END, d = CASE port' + query_sub_when2 + \
                 ' END, t = unix_timestamp() ' + \
                 ' WHERE port IN (%s)' % query_sub_in
-            self.mysqlObj.execute_query(query_sql, False)
+            mysqlObj.execute_query(query_sql, False)
 
-        self.mysqlObj.update_node_heartbeat(bandwidth_thistime)
+        mysqlObj.update_node_heartbeat(bandwidth_thistime)
 
-        self.mysqlObj.add_alive_user_count(alive_user_count)
+        mysqlObj.add_alive_user_count(alive_user_count)
 
-        self.mysqlObj.add_node_networking_info(self.uptime(), self.load())
+        mysqlObj.add_node_networking_info(self.uptime(), self.load())
 
         online_iplist = ServerPool.get_instance().get_servers_iplist()
         for id in online_iplist.keys():
             for ip in online_iplist[id]:
-                self.mysqlObj.add_alive_ip_info(self.port_uid_table[id], ip)
+                mysqlObj.add_alive_ip_info(self.port_uid_table[id], ip)
 
         detect_log_list = ServerPool.get_instance().get_servers_detect_log()
         for port in detect_log_list.keys():
             for rule_id in detect_log_list[port]:
-                self.mysqlObj.add_detect_log_info(self.port_uid_table[port], rule_id)
+                mysqlObj.add_detect_log_info(self.port_uid_table[port], rule_id)
 
         deny_str = ""
         if platform.system() == 'Linux' and get_config().ANTISSATTACK == 1:
@@ -143,11 +143,11 @@ class DbTransfer(object):
                     if has_match_node:
                         continue
 
-                    if self.mysqlObj.is_ip_in_blockip(realip):
+                    if mysqlObj.is_ip_in_blockip(realip):
                         continue
 
                     if get_config().CLOUDSAFE == 1:
-                        self.mysqlObj.add_block_ip(realip)
+                        mysqlObj.add_block_ip(realip)
                     else:
                         if not is_ipv6:
                             os.system('route add -host %s gw 127.0.0.1' %
@@ -166,6 +166,7 @@ class DbTransfer(object):
                     fcntl.flock(deny_file.fileno(), fcntl.LOCK_EX)
                     deny_file.write(deny_str)
                     deny_file.close()
+        del mysqlObj
         return update_transfer
 
     def uptime(self):
@@ -244,7 +245,9 @@ class DbTransfer(object):
                 'disconnect_ip',
                 'is_multi_user']
 
-        nodeinfo = self.mysqlObj.get_current_node_info()
+        mysqlObj = MySqlWrapper()
+
+        nodeinfo = mysqlObj.get_current_node_info()
         if nodeinfo is None:
             return []
 
@@ -263,7 +266,7 @@ class DbTransfer(object):
         else:
             node_group_sql = "AND `node_group`=" + str(nodeinfo[0])
 
-        users = self.mysqlObj.get_all_user_info(keys, nodeinfo[1], node_group_sql)
+        users = mysqlObj.get_all_user_info(keys, nodeinfo[1], node_group_sql)
 
         rows = []
         for r in users:
@@ -275,7 +278,7 @@ class DbTransfer(object):
         # 读取节点IP
         # SELECT * FROM `ss_node`  where `node_ip` != ''
         self.node_ip_list = []
-        node_ips = self.mysqlObj.get_node_ip_list()
+        node_ips = mysqlObj.get_node_ip_list()
         for r in node_ips:
             temp_list = str(r[0]).split(',')
             self.node_ip_list.append(temp_list[0])
@@ -283,7 +286,7 @@ class DbTransfer(object):
         # 读取审计规则,数据包匹配部分
         keys_detect = ['id', 'regex']
 
-        detect_list_1 = self.mysqlObj.get_detect_list_with_type_1(keys_detect)
+        detect_list_1 = mysqlObj.get_detect_list_with_type_1(keys_detect)
 
         exist_id_list = []
 
@@ -314,7 +317,7 @@ class DbTransfer(object):
         for id in deleted_id_list:
             del self.detect_text_list[id]
 
-        detect_list_2 = self.mysqlObj.get_detect_list_with_type_2(keys_detect)
+        detect_list_2 = mysqlObj.get_detect_list_with_type_2(keys_detect)
 
         exist_id_list = []
 
@@ -348,8 +351,9 @@ class DbTransfer(object):
         # 读取中转规则，如果是中转节点的话
 
         if self.is_relay:
-            self.relay_rule_list = self.mysqlObj.get_relay_rules()
+            self.relay_rule_list = mysqlObj.get_relay_rules()
 
+        del mysqlObj
         return rows
 
     def cmp(self, val1, val2):
